@@ -24,7 +24,8 @@ defmodule PubsubGrpc.MixProject do
     [
       {:poolex, "~> 1.3"},
       {:grpc, "~> 0.10.1"},
-      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"}
+      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"},
+      {:jason, "~> 1.4"}
     ]
   end
 end
