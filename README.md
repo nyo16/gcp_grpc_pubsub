@@ -1,6 +1,6 @@
 # PubsubGrpc
 
-**TODO: Add description**
+A library for interacting with Google Cloud Pub/Sub using gRPC.
 
 ## Installation
 
@@ -19,3 +19,38 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at <https://hexdocs.pm/pubsub_grpc>.
 
+## Development with Pub/Sub Emulator
+
+This project includes a Docker Compose configuration for running a local Google Cloud Pub/Sub emulator.
+
+### Starting the Emulator
+
+To start the Pub/Sub emulator:
+
+```bash
+docker-compose up -d
+```
+
+This will start the emulator in the background. The emulator will be available at `localhost:8085`.
+
+### Stopping the Emulator
+
+To stop the emulator:
+
+```bash
+docker-compose down
+```
+
+### Configuration
+
+The emulator is configured to use the project ID `my-project-id`. This matches the configuration in `config/dev.exs`.
+
+When running in development mode, the application will automatically connect to the local emulator instead of the real Google Cloud Pub/Sub service.
+
+### Viewing Logs
+
+To view the emulator logs:
+
+```bash
+docker-compose logs -f pubsub-emulator
+```
