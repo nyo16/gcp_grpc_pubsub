@@ -29,17 +29,13 @@ defmodule PubsubGrpc.Examples do
   ```
   """
   def create_and_publish do
-    # Project ID should match the one configured in config/dev.exs
-    project_id = "my-project-id"
+    # Topic name to create
     topic_name = "example-topic"
 
-    # Fully qualified topic name
-    full_topic_name = "projects/#{project_id}/topics/#{topic_name}"
+    # Create a topic (project_id will be read from config)
+    IO.puts("Creating topic: #{topic_name}")
 
-    # Create a topic
-    IO.puts("Creating topic: #{full_topic_name}")
-
-    case PubsubGrpc.create_topic(full_topic_name) do
+    case PubsubGrpc.create_topic(topic_name) do
       {:ok, topic} ->
         IO.puts("Topic created successfully: #{inspect(topic.name)}")
 
@@ -57,7 +53,7 @@ defmodule PubsubGrpc.Examples do
         # Publish the message
         IO.puts("Publishing message: #{inspect(message)}")
 
-        case PubsubGrpc.publish_json(full_topic_name, message) do
+        case PubsubGrpc.publish_json(topic_name, message) do
           {:ok, response} ->
             IO.puts("Message published successfully!")
             IO.puts("Message IDs: #{inspect(response.message_ids)}")
@@ -88,12 +84,6 @@ defmodule PubsubGrpc.Examples do
   ```
   """
   def publish_multiple(topic_name) do
-    # Project ID should match the one configured in config/dev.exs
-    project_id = "my-project-id"
-
-    # Fully qualified topic name
-    full_topic_name = "projects/#{project_id}/topics/#{topic_name}"
-
     # Create multiple sample messages
     messages = for i <- 1..5 do
       %{
@@ -106,10 +96,10 @@ defmodule PubsubGrpc.Examples do
       }
     end
 
-    # Publish the messages
-    IO.puts("Publishing #{length(messages)} messages to topic: #{full_topic_name}")
+    # Publish the messages (project_id will be read from config)
+    IO.puts("Publishing #{length(messages)} messages to topic: #{topic_name}")
 
-    case PubsubGrpc.publish_json(full_topic_name, messages) do
+    case PubsubGrpc.publish_json(topic_name, messages) do
       {:ok, response} ->
         IO.puts("Messages published successfully!")
         IO.puts("Message IDs: #{inspect(response.message_ids)}")
