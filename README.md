@@ -47,6 +47,17 @@ The emulator is configured to use the project ID `my-project-id`. This matches t
 
 When running in development mode, the application will automatically connect to the local emulator instead of the real Google Cloud Pub/Sub service.
 
+#### Connection Pool Configuration
+
+The application uses a connection pool for managing gRPC connections. You can configure the number of worker connections in your config files:
+
+```elixir
+config :pubsub_grpc, :connection_pool,
+  workers_count: 5
+```
+
+The `workers_count` setting determines how many concurrent connections the pool will maintain. If not specified, it defaults to 5 workers.
+
 ### Viewing Logs
 
 To view the emulator logs:
