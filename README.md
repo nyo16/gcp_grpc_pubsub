@@ -24,104 +24,122 @@ end
 
 ## Usage
 
-### Basic Operations
+### Simple API (Recommended)
+
+The main `PubsubGrpc` module provides convenient functions for common operations:
 
 #### 1. Creating a Topic
 
 ```elixir
-# Create a topic
-create_topic_operation = fn channel, _params ->
-  request = %Google.Pubsub.V1.Topic{
-    name: "projects/my-project-id/topics/my-topic"
-  }
-  Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
-end
-
-{:ok, topic} = PubsubGrpc.Client.execute(create_topic_operation)
+{:ok, topic} = PubsubGrpc.create_topic("my-project", "events")
 ```
 
 #### 2. Publishing Messages
 
 ```elixir
-# Publish a single message
-publish_operation = fn channel, _params ->
-  message = %Google.Pubsub.V1.PubsubMessage{
-    data: "Hello, Pub/Sub!",
-    attributes: %{"source" => "my_app"}
-  }
+# Publish multiple messages
+messages = [
+  %{data: "Hello World", attributes: %{"source" => "app"}},
+  %{data: "Another message"}
+]
+{:ok, response} = PubsubGrpc.publish("my-project", "events", messages)
 
-  request = %Google.Pubsub.V1.PublishRequest{
-    topic: "projects/my-project-id/topics/my-topic",
-    messages: [message]
-  }
-
-  Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
-end
-
-{:ok, response} = PubsubGrpc.Client.execute(publish_operation)
+# Publish single message (convenience function)
+{:ok, response} = PubsubGrpc.publish_message("my-project", "events", "Hello!")
+{:ok, response} = PubsubGrpc.publish_message("my-project", "events", "Hello!", %{"source" => "app"})
 ```
 
 #### 3. Creating a Subscription
 
 ```elixir
-# Create a subscription
-create_subscription_operation = fn channel, _params ->
-  request = %Google.Pubsub.V1.Subscription{
-    name: "projects/my-project-id/subscriptions/my-subscription",
-    topic: "projects/my-project-id/topics/my-topic",
-    ack_deadline_seconds: 60
-  }
-  Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request)
-end
+{:ok, subscription} = PubsubGrpc.create_subscription("my-project", "events", "my-subscription")
 
-{:ok, subscription} = PubsubGrpc.Client.execute(create_subscription_operation)
+# With custom acknowledgment deadline
+{:ok, subscription} = PubsubGrpc.create_subscription("my-project", "events", "my-subscription", 
+  ack_deadline_seconds: 30)
 ```
 
 #### 4. Pulling Messages
 
 ```elixir
-# Pull messages from subscription
-pull_operation = fn channel, _params ->
-  request = %Google.Pubsub.V1.PullRequest{
-    subscription: "projects/my-project-id/subscriptions/my-subscription",
-    max_messages: 10
-  }
-  Google.Pubsub.V1.Subscriber.Stub.pull(channel, request)
-end
+# Pull up to 10 messages (default)
+{:ok, messages} = PubsubGrpc.pull("my-project", "my-subscription")
 
-{:ok, response} = PubsubGrpc.Client.execute(pull_operation)
+# Pull specific number of messages
+{:ok, messages} = PubsubGrpc.pull("my-project", "my-subscription", 5)
+
+# Process messages
+Enum.each(messages, fn msg ->
+  IO.puts("Received: #{msg.message.data}")
+  IO.inspect(msg.message.attributes)
+end)
 ```
 
 #### 5. Acknowledging Messages
 
 ```elixir
-# Acknowledge processed messages
-acknowledge_operation = fn channel, ack_ids ->
-  request = %Google.Pubsub.V1.AcknowledgeRequest{
-    subscription: "projects/my-project-id/subscriptions/my-subscription",
-    ack_ids: ack_ids
-  }
-  Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request)
-end
+{:ok, messages} = PubsubGrpc.pull("my-project", "my-subscription")
 
-:ok = PubsubGrpc.Client.execute(acknowledge_operation, ["ack-id-1", "ack-id-2"])
+# Extract acknowledgment IDs
+ack_ids = Enum.map(messages, & &1.ack_id)
+
+# Acknowledge processed messages
+:ok = PubsubGrpc.acknowledge("my-project", "my-subscription", ack_ids)
 ```
 
-### Using Connection Pool Directly
+#### 6. Complete Workflow Example
 
 ```elixir
-# Execute multiple operations with the same connection
-result = PubsubGrpc.Client.with_connection(fn channel ->
+# Complete pub/sub workflow
+{:ok, _topic} = PubsubGrpc.create_topic("my-project", "events")
+{:ok, _subscription} = PubsubGrpc.create_subscription("my-project", "events", "processor")
+
+# Publish some messages
+messages = [
+  %{data: "Event 1", attributes: %{"type" => "user_signup"}},
+  %{data: "Event 2", attributes: %{"type" => "user_login"}}
+]
+{:ok, _response} = PubsubGrpc.publish("my-project", "events", messages)
+
+# Process messages
+{:ok, received_messages} = PubsubGrpc.pull("my-project", "processor", 10)
+
+Enum.each(received_messages, fn msg ->
+  # Process the message
+  IO.puts("Processing: #{msg.message.data}")
+  process_event(msg.message.data, msg.message.attributes)
+end)
+
+# Acknowledge processed messages
+ack_ids = Enum.map(received_messages, & &1.ack_id)
+:ok = PubsubGrpc.acknowledge("my-project", "processor", ack_ids)
+```
+
+### Advanced API (Lower Level)
+
+For more complex operations, you can use the lower-level client API:
+
+```elixir
+# Custom operation using Client.execute
+operation = fn channel, _params ->
+  request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
+  Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request)
+end
+
+{:ok, topic} = PubsubGrpc.Client.execute(operation)
+
+# Multiple operations with same connection
+result = PubsubGrpc.with_connection(fn channel ->
   # Create topic
   topic_request = %Google.Pubsub.V1.Topic{
-    name: "projects/my-project-id/topics/batch-topic"
+    name: "projects/my-project/topics/batch-topic"
   }
   {:ok, _topic} = Google.Pubsub.V1.Publisher.Stub.create_topic(channel, topic_request)
   
   # Publish message
   message = %Google.Pubsub.V1.PubsubMessage{data: "Batch operation"}
   publish_request = %Google.Pubsub.V1.PublishRequest{
-    topic: "projects/my-project-id/topics/batch-topic",
+    topic: "projects/my-project/topics/batch-topic",
     messages: [message]
   }
   Google.Pubsub.V1.Publisher.Stub.publish(channel, publish_request)
