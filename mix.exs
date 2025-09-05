@@ -22,7 +22,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:poolex, "~> 1.3"},
+      {:nimble_pool, "~> 1.1.0"},
       {:grpc, "~> 0.10.1"},
       {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"}
     ]
