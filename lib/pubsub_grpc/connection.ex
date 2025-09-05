@@ -92,8 +92,9 @@ defmodule PubsubGrpc.Connection do
 
   def execute(pool, operation_fn, params \\ []) when is_function(operation_fn, 2) do
     try do
-      NimblePool.checkout!(pool, :checkout, fn _pool, channel ->
-        operation_fn.(channel, params)
+      NimblePool.checkout!(pool, :checkout, fn _from, channel ->
+        result = operation_fn.(channel, params)
+        {result, channel}
       end)
     rescue
       error -> {:error, error}
@@ -104,8 +105,9 @@ defmodule PubsubGrpc.Connection do
   end
 
   def with_connection(pool, fun) when is_function(fun, 1) do
-    NimblePool.checkout!(pool, :checkout, fn _pool, channel ->
-      fun.(channel)
+    NimblePool.checkout!(pool, :checkout, fn _from, channel ->
+      result = fun.(channel)
+      {result, channel}
     end)
   end
 
@@ -119,29 +121,94 @@ defmodule PubsubGrpc.Connection do
         ssl_opts = Application.get_env(:google_grpc_pubsub, :ssl_opts, [])
         credentials = GRPC.Credential.new(ssl: ssl_opts)
 
-        GRPC.Stub.connect("pubsub.googleapis.com:443",
+        case GRPC.Stub.connect("pubsub.googleapis.com:443",
           cred: credentials,
           adapter_opts: [
-            http2_opts: %{keepalive: :infinity}
+            http2_opts: %{
+              keepalive: 30_000  # Send keepalive every 30 seconds
+            }
           ]
-        )
+        ) do
+          {:ok, channel} ->
+            {:ok, channel}
+          {:error, reason} ->
+            # Log connection failures for debugging
+            IO.warn("Failed to connect to Google Cloud Pub/Sub: #{inspect(reason)}")
+            {:error, reason}
+        end
 
       [project_id: _project_id, host: host, port: port] = _config
       when is_binary(host) and is_number(port) ->
-        GRPC.Stub.connect(host, port,
-          adapter_opts: [
-            http2_opts: %{keepalive: :infinity}
-          ]
-        )
+        # For emulator connections, retry with backoff
+        create_emulator_connection(host, port, 3)
     end
   end
 
+  # Create emulator connection with retry logic
+  defp create_emulator_connection(host, port, retries_left) when retries_left > 0 do
+    case GRPC.Stub.connect(host, port,
+      adapter_opts: [
+        http2_opts: %{
+          keepalive: 30_000  # Send keepalive every 30 seconds
+        }
+      ]
+    ) do
+      {:ok, channel} ->
+        {:ok, channel}
+      {:error, _reason} when retries_left > 1 ->
+        # Wait and retry
+        :timer.sleep(1000)
+        create_emulator_connection(host, port, retries_left - 1)
+      {:error, reason} ->
+        IO.warn("Failed to connect to emulator at #{host}:#{port} after retries: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp create_emulator_connection(_host, _port, 0) do
+    {:error, :max_retries_exceeded}
+  end
+
   defp is_connection_alive?(nil), do: false
-  defp is_connection_alive?(%GRPC.Channel{adapter_payload: %{conn_pid: pid}}) when is_pid(pid) do
-    Process.alive?(pid)
+  defp is_connection_alive?(%GRPC.Channel{adapter_payload: %{conn_pid: pid}} = channel) when is_pid(pid) do
+    if Process.alive?(pid) do
+      # Additional check: try a simple operation to ensure connection is actually working
+      # This helps detect channels that are technically alive but have timed out
+      test_connection_health(channel)
+    else
+      false
+    end
   end
 
   defp is_connection_alive?(_channel), do: false
+
+  # Test if a connection is actually working by attempting a simple operation
+  defp test_connection_health(channel) do
+    try do
+      # Try to list topics with a very small page size - this is a lightweight operation
+      # that will fail quickly if the connection is dead
+      request = %Google.Pubsub.V1.ListTopicsRequest{
+        project: "projects/health-check",  # Doesn't need to exist
+        page_size: 1
+      }
+      
+      # Set a short timeout for the health check
+      case Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, timeout: 2000) do
+        {:ok, _} -> true
+        {:error, %GRPC.RPCError{status: 5}} -> true  # NOT_FOUND is expected and means connection works
+        {:error, %GRPC.RPCError{status: 3}} -> true  # INVALID_ARGUMENT is also fine
+        {:error, %GRPC.RPCError{status: 7}} -> true  # PERMISSION_DENIED means connection works
+        {:error, %GRPC.RPCError{status: 16}} -> true # UNAUTHENTICATED means connection works
+        {:error, %GRPC.RPCError{status: 4}} -> false # DEADLINE_EXCEEDED means connection is dead
+        {:error, %GRPC.RPCError{status: 14}} -> false # UNAVAILABLE means connection is dead  
+        {:error, _} -> false # Any other error likely means dead connection
+      end
+    rescue
+      _ -> false
+    catch
+      :exit, _ -> false
+    end
+  end
 
   defp cleanup_connection(%GRPC.Channel{} = channel) do
     try do

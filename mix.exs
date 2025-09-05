@@ -7,7 +7,15 @@ defmodule PubsubGrpc.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.cobertura": :test
+      ]
     ]
   end
 
@@ -24,7 +32,8 @@ defmodule PubsubGrpc.MixProject do
     [
       {:nimble_pool, "~> 1.1.0"},
       {:grpc, "~> 0.10.1"},
-      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"}
+      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"},
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
 end

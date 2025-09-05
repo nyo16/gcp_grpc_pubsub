@@ -253,21 +253,200 @@ To view the emulator logs:
 docker-compose logs -f pubsub-emulator
 ```
 
-## Connection Pool Configuration
+## Connection Pooling
 
-You can configure the connection pool settings in your application:
+### Default Pool
+
+PubsubGrpc automatically starts a connection pool (`PubsubGrpc.ConnectionPool`) with 5 connections when the application starts. All the convenience functions use this default pool.
+
+### Custom Pools
+
+You can create additional pools for different use cases:
+
+#### 1. Adding to Supervision Tree
 
 ```elixir
-# In your application.ex or supervision tree
+# lib/my_app/application.ex
+defmodule MyApp.Application do
+  use Application
+
+  def start(_type, _args) do
+    children = [
+      # Your other services...
+      
+      # Custom Pub/Sub pool for high-throughput operations
+      {PubsubGrpc.Connection, [
+        name: MyApp.HighThroughputPool,
+        pool_size: 20
+      ]},
+      
+      # Custom pool for background jobs
+      {PubsubGrpc.Connection, [
+        name: MyApp.BackgroundJobsPool,
+        pool_size: 3
+      ]},
+      
+      # Pool with custom connection options
+      {PubsubGrpc.Connection, [
+        name: MyApp.CustomPool,
+        pool_size: 10,
+        emulator: [project_id: "custom-project", host: "localhost", port: 8086]
+      ]}
+    ]
+
+    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+end
+```
+
+#### 2. Using Custom Pools
+
+```elixir
+# Using the high-throughput pool
+operation = fn channel, _params ->
+  request = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/high-volume"}
+  Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
+end
+
+{:ok, topic} = PubsubGrpc.Connection.execute(MyApp.HighThroughputPool, operation)
+
+# Or using the Client module
+{:ok, topic} = PubsubGrpc.Client.execute(MyApp.HighThroughputPool, operation)
+```
+
+#### 3. Runtime Pool Creation
+
+```elixir
+# Start a pool dynamically
+{:ok, pid} = PubsubGrpc.Connection.start_link([
+  name: MyApp.DynamicPool,
+  pool_size: 8
+])
+
+# Use the dynamic pool
+operation = fn channel, _params ->
+  # Your GRPC operation here
+end
+
+{:ok, result} = PubsubGrpc.Connection.execute(MyApp.DynamicPool, operation)
+```
+
+### Pool Configuration Options
+
+```elixir
+{PubsubGrpc.Connection, [
+  # Required: Pool name (must be unique)
+  name: MyApp.MyPool,
+  
+  # Optional: Number of connections in the pool (default: 5)
+  pool_size: 10,
+  
+  # Optional: Override emulator settings for this pool
+  emulator: [
+    project_id: "test-project",
+    host: "localhost", 
+    port: 8085
+  ],
+  
+  # Optional: SSL options for production (default: [])
+  ssl_opts: []
+]}
+```
+
+### Pool Monitoring and Health
+
+```elixir
+# Check if pool is alive
+Process.alive?(Process.whereis(MyApp.MyPool))
+
+# Get pool information (NimblePool specific)
+:sys.get_status(MyApp.MyPool)
+```
+
+### Pool Best Practices
+
+#### 1. Pool Sizing
+
+```elixir
+# For high-throughput applications
+{PubsubGrpc.Connection, [name: MyApp.HighVolumePool, pool_size: 20]}
+
+# For background processing
+{PubsubGrpc.Connection, [name: MyApp.BackgroundPool, pool_size: 5]}
+
+# For real-time operations
+{PubsubGrpc.Connection, [name: MyApp.RealtimePool, pool_size: 10]}
+```
+
+#### 2. Separate Pools by Function
+
+```elixir
 children = [
+  # Publisher pool - optimized for publishing
   {PubsubGrpc.Connection, [
-    name: MyApp.PubSubPool,
-    pool_size: 10  # Default: 5
+    name: MyApp.PublisherPool,
+    pool_size: 15
+  ]},
+  
+  # Subscriber pool - optimized for pulling
+  {PubsubGrpc.Connection, [
+    name: MyApp.SubscriberPool,  
+    pool_size: 8
+  ]},
+  
+  # Admin pool - for topic/subscription management
+  {PubsubGrpc.Connection, [
+    name: MyApp.AdminPool,
+    pool_size: 3
   ]}
 ]
+```
 
-# Use custom pool
-PubsubGrpc.Connection.execute(MyApp.PubSubPool, operation_fn)
+#### 3. Using Pools in GenServers
+
+```elixir
+defmodule MyApp.PubSubWorker do
+  use GenServer
+  
+  # Use specific pool for this worker
+  @pool_name MyApp.WorkerPool
+  
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+  
+  def publish_event(data) do
+    GenServer.cast(__MODULE__, {:publish, data})
+  end
+  
+  def handle_cast({:publish, data}, state) do
+    operation = fn channel, _params ->
+      message = %Google.Pubsub.V1.PubsubMessage{data: data}
+      request = %Google.Pubsub.V1.PublishRequest{
+        topic: state.topic_path,
+        messages: [message]
+      }
+      Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
+    end
+    
+    # Use dedicated pool
+    case PubsubGrpc.Connection.execute(@pool_name, operation) do
+      {:ok, _response} -> 
+        IO.puts("Published successfully")
+      {:error, error} -> 
+        IO.puts("Failed to publish: #{inspect(error)}")
+    end
+    
+    {:noreply, state}
+  end
+end
+
+# Add both the pool and worker to supervision tree
+children = [
+  {PubsubGrpc.Connection, [name: MyApp.WorkerPool, pool_size: 5]},
+  {MyApp.PubSubWorker, [topic_path: "projects/my-project/topics/events"]}
+]
 ```
 
 ## Architecture
