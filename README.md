@@ -5,6 +5,8 @@ A library for interacting with Google Cloud Pub/Sub using gRPC with **NimblePool
 ## Features
 
 - 🏊‍♂️ **Connection Pooling**: Uses NimblePool for efficient GRPC connection management
+- 📦 **Batch Publishing**: High-performance batch message publishing (100-1000+ messages per call)
+- 🔐 **Multiple Authentication**: Goth integration, gcloud CLI, service accounts, and GCE metadata
 - 🔄 **Auto-Recovery**: Automatic connection health checking and recovery
 - 🐳 **Docker Support**: Built-in Docker Compose setup for local development
 - 🧪 **Comprehensive Tests**: Full integration test suite with emulator
@@ -75,14 +77,28 @@ The main `PubsubGrpc` module provides convenient functions for common operations
 
 #### 2. Publishing Messages
 
+##### Batch Publishing (Recommended for High Throughput)
+
 ```elixir
-# Publish multiple messages
+# Publish multiple messages in a single API call - much more efficient!
 messages = [
-  %{data: "Hello World", attributes: %{"source" => "app"}},
-  %{data: "Another message"}
+  %{data: "Order created", attributes: %{"type" => "order", "user_id" => "123"}},
+  %{data: "Payment processed", attributes: %{"type" => "payment", "amount" => "99.99"}},
+  %{data: "Email sent", attributes: %{"type" => "notification", "template" => "receipt"}}
 ]
 {:ok, response} = PubsubGrpc.publish("my-project", "events", messages)
+IO.inspect(response.message_ids)  # ["msg_id_1", "msg_id_2", "msg_id_3"]
+```
 
+**Performance Benefits:**
+- 🚀 **Higher Throughput**: Send 100-1000+ messages per API call
+- ⚡ **Lower Latency**: Single network round-trip instead of N calls  
+- 💰 **Cost Efficient**: Fewer API calls = lower costs
+- 🔗 **Connection Reuse**: One connection checkout from pool
+
+##### Single Message Publishing
+
+```elixir
 # Publish single message (convenience function)
 {:ok, response} = PubsubGrpc.publish_message("my-project", "events", "Hello!")
 {:ok, response} = PubsubGrpc.publish_message("my-project", "events", "Hello!", %{"source" => "app"})
