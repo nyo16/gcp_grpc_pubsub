@@ -52,7 +52,8 @@ defmodule PubsubGrpc.MixProject do
       {:grpc, "~> 0.10.2"},
       {:googleapis_proto_ex, "~> 0.3.0"},
       {:excoveralls, "~> 0.18", only: :test},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:goth, "~> 1.4", optional: true}
     ]
   end
 end

@@ -9,8 +9,29 @@ defmodule PubsubGrpc do
   ## Configuration
 
   ### Production (Google Cloud)
-      # Will connect to pubsub.googleapis.com:443
-      # Make sure to set up authentication (service account, gcloud, etc.)
+  
+  For production use, the library connects to `pubsub.googleapis.com:443` and supports multiple authentication methods:
+
+  #### Option 1: Goth Library (Recommended)
+      # Add to your supervision tree
+      children = [
+        {Goth, name: MyApp.Goth, source: {:service_account, credentials}},
+        # ... other children
+      ]
+      
+      # Configure PubsubGrpc to use Goth
+      config :pubsub_grpc, :goth, MyApp.Goth
+
+  #### Option 2: gcloud CLI
+      # Authenticate using gcloud
+      gcloud auth application-default login
+
+  #### Option 3: Service Account Key
+      # Set environment variable
+      export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+
+  #### Option 4: Google Cloud Environment
+      # Automatically works on GCE, GKE, Cloud Run, etc.
 
   ### Development/Test (Local Emulator)
       # config/dev.exs
@@ -64,7 +85,8 @@ defmodule PubsubGrpc do
 
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
-      Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
     end
 
     Client.execute(operation)
@@ -87,7 +109,8 @@ defmodule PubsubGrpc do
 
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
-      Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
@@ -119,7 +142,8 @@ defmodule PubsubGrpc do
         page_size: Keyword.get(opts, :page_size, 0),
         page_token: Keyword.get(opts, :page_token, "")
       }
-      Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
@@ -169,7 +193,8 @@ defmodule PubsubGrpc do
         messages: pubsub_messages
       }
 
-      Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Publisher.Stub.publish(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
@@ -232,7 +257,8 @@ defmodule PubsubGrpc do
         topic: topic_path,
         ack_deadline_seconds: Keyword.get(opts, :ack_deadline_seconds, 60)
       }
-      Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, auth_opts)
     end
 
     Client.execute(operation)
@@ -255,7 +281,8 @@ defmodule PubsubGrpc do
 
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
-      Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
@@ -296,7 +323,8 @@ defmodule PubsubGrpc do
         subscription: subscription_path,
         max_messages: max_messages
       }
-      Google.Pubsub.V1.Subscriber.Stub.pull(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Subscriber.Stub.pull(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
@@ -332,7 +360,8 @@ defmodule PubsubGrpc do
         subscription: subscription_path,
         ack_ids: ack_ids
       }
-      Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request)
+      auth_opts = PubsubGrpc.Auth.request_opts()
+      Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request, auth_opts)
     end
 
     case Client.execute(operation) do
