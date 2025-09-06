@@ -4,10 +4,11 @@ A library for interacting with Google Cloud Pub/Sub using gRPC with **NimblePool
 
 ## Features
 
-- 🏊‍♂️ **Connection Pooling**: Uses NimblePool for efficient GRPC connection management
+- 🚀 **Eager Connection Pooling**: All GRPC connections pre-established at startup for zero-latency first requests
 - 📦 **Batch Publishing**: High-performance batch message publishing (100-1000+ messages per call)
 - 🔐 **Multiple Authentication**: Goth integration, gcloud CLI, service accounts, and GCE metadata
 - 🔄 **Auto-Recovery**: Automatic connection health checking and recovery
+- 🏊‍♂️ **NimblePool Management**: Efficient connection lifecycle with async initialization
 - 🐳 **Docker Support**: Built-in Docker Compose setup for local development
 - 🧪 **Comprehensive Tests**: Full integration test suite with emulator
 - 🎯 **Clean API**: Simple client interface for common operations
@@ -29,9 +30,10 @@ This library uses **gRPC** instead of the traditional HTTP REST API for Google C
 - **Keep-Alive**: Maintains warm connections preventing cold start delays
 
 ### 🛡️ **Reliability & Resilience**
-- **Connection Pooling**: NimblePool manages connection lifecycle automatically  
+- **Eager Connection Pooling**: All connections pre-established at startup (no lazy initialization delays)
+- **NimblePool Management**: Automatic connection lifecycle with async initialization
 - **Health Checking**: Automatic detection and recovery from dead connections
-- **Timeout Handling**: Built-in keepalive prevents Google's 1-minute idle timeout
+- **Timeout Handling**: Built-in keepalive prevents Google's 1-minute idle timeout  
 - **Exponential Backoff**: Smart retry logic for connection failures
 
 ### 📊 **Practical Impact**

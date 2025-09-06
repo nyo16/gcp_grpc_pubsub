@@ -5,8 +5,8 @@ defmodule PubsubGrpc.Connection do
   This module implements a NimblePool-based connection pool for Google Cloud Pub/Sub
   GRPC connections. It provides:
 
-  - **Lazy Connection Creation**: Connections are created only when needed
-  - **Connection Health Checking**: Dead connections are automatically detected and replaced
+  - **Eager Connection Creation**: All connections are created at pool startup for immediate availability
+  - **Connection Health Checking**: Dead connections are automatically detected and replaced  
   - **Timeout Handling**: 30-second keepalive to prevent Google's 1-minute idle timeout
   - **Automatic Recovery**: Failed connections are recreated with exponential backoff
   - **Emulator Support**: Built-in retry logic for emulator startup delays
@@ -49,24 +49,32 @@ defmodule PubsubGrpc.Connection do
 
   @impl NimblePool
   def init_worker(pool_state) do
-    # Initialize with nil - connections will be created lazily during checkout
-    {:ok, nil, pool_state}
+    # Eagerly create connections at pool startup using async initialization
+    # This prevents blocking the pool supervisor during startup
+    {:async, fn -> 
+      case create_connection() do
+        {:ok, channel} -> channel
+        {:error, reason} -> 
+          # Log the error and return a marker that we'll handle in checkout
+          IO.warn("Failed to create initial GRPC connection: #{inspect(reason)}")
+          {:connection_failed, reason}
+      end
+    end, pool_state}
   end
 
   @impl NimblePool
   def handle_checkout(:checkout, _from, channel, pool_state) do
     case channel do
-      nil ->
-        # No connection yet, create one
+      {:connection_failed, reason} ->
+        # Initial connection failed, try to create one now
         case create_connection() do
           {:ok, new_channel} ->
             {:ok, new_channel, new_channel, pool_state}
-
-          {:error, reason} ->
+          {:error, _} ->
             {:remove, reason}
         end
 
-      existing_channel ->
+      existing_channel when is_struct(existing_channel, GRPC.Channel) ->
         case is_connection_alive?(existing_channel) do
           true ->
             {:ok, existing_channel, existing_channel, pool_state}
