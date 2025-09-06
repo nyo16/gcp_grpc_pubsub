@@ -24,11 +24,7 @@ defmodule PubsubGrpc.MixProject do
         main: "PubsubGrpc",
         extras: ["README.md"]
       ],
-      package: [
-        description: "Efficient Google Cloud Pub/Sub client using gRPC with NimblePool connection management",
-        licenses: ["MIT"],
-        links: %{"GitHub" => "https://github.com/your-username/pubsub_grpc"}
-      ]
+      package: package()
     ]
   end
 
@@ -40,12 +36,21 @@ defmodule PubsubGrpc.MixProject do
     ]
   end
 
+  defp package do
+    [
+      description: "Efficient Google Cloud Pub/Sub client using gRPC with NimblePool connection management",
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/nyo16/gcp_grpc_pubsub"},
+      files: ~w(lib .formatter.exs mix.exs README* LICENSE*)
+    ]
+  end
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
       {:nimble_pool, "~> 1.1.0"},
-      {:grpc, "~> 0.10.1"},
-      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"},
+      {:grpc, "~> 0.10.2"},
+      {:googleapis_proto_ex, "~> 0.3.0"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
