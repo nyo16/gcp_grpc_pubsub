@@ -22,4 +22,23 @@ pubsub_grpc-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
+# Editor files and swap files
 .lsp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test and debug files
+*.exs
+!test/**/*.exs
+!mix.exs
+
+# Coverage reports
+/cover/
+coverage.html
+excoveralls.json
+
+# Documentation
+/doc/
+doc/
