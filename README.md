@@ -189,12 +189,14 @@ end)
 
 #### Production (Google Cloud)
 
+For production use with Google Cloud, you need to set up authentication. See the [Authentication](#authentication) section below.
+
 ```elixir
 # config/prod.exs
 import Config
 
-# Will connect to pubsub.googleapis.com:443
-# Make sure to set up authentication (service account, gcloud, etc.)
+# No additional config needed - will connect to pubsub.googleapis.com:443
+# Authentication is handled via environment variables or service account keys
 ```
 
 #### Development/Test (Local Emulator)
@@ -208,6 +210,118 @@ config :pubsub_grpc, :emulator,
   host: "localhost",
   port: 8085
 ```
+
+## Authentication
+
+For production use with Google Cloud Pub/Sub, you need to authenticate your application. **This library automatically handles authentication** when you set up credentials using any of the methods below - no additional code changes are needed in your application.
+
+The library supports multiple authentication methods:
+
+### Method 1: Service Account Key (Recommended for Production)
+
+1. **Create a Service Account:**
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/)
+   - Navigate to IAM & Admin > Service Accounts
+   - Create a new service account with Pub/Sub permissions
+   - Download the JSON key file
+
+2. **Set Environment Variable:**
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+   ```
+
+3. **Use in Production:**
+   ```elixir
+   # Your application will automatically use the credentials
+   {:ok, topic} = PubsubGrpc.create_topic("my-project", "my-topic")
+   
+   # The library automatically handles authentication through the GRPC SSL credentials
+   # No additional configuration needed - just ensure GOOGLE_APPLICATION_CREDENTIALS is set
+   ```
+
+### Method 2: Using Goth Library (Advanced Token Control)
+
+If you need explicit control over token management, you can use the [Goth](https://github.com/peburrows/goth) library for custom authentication handling:
+
+1. **Add Goth to your dependencies:**
+   ```elixir
+   def deps do
+     [
+       {:pubsub_grpc, "~> 0.2.0"},
+       {:goth, "~> 1.3"}
+     ]
+   end
+   ```
+
+2. **Configure Goth in your application:**
+   ```elixir
+   # config/prod.exs
+   config :goth, json: {:system, "GOOGLE_APPLICATION_CREDENTIALS_JSON"}
+
+   # lib/my_app/application.ex
+   def start(_type, _args) do
+     children = [
+       {Goth, name: MyApp.Goth, source: {:service_account, credentials}},
+       # ... other children
+     ]
+   end
+   ```
+
+3. **Manual token handling with low-level GRPC (for advanced use cases):**
+   ```elixir
+   # Get token from Goth
+   {:ok, %{token: token, type: type}} = Goth.fetch(MyApp.Goth)
+   
+   # Direct GRPC connection with explicit token
+   project_id = "my-project-id"
+   {:ok, channel} = GRPC.Stub.connect("pubsub.googleapis.com:443", 
+     cred: GRPC.Credential.new(ssl: []))
+   
+   req = %Google.Pubsub.V1.ListTopicsRequest{
+     project: "projects/#{project_id}", 
+     page_size: 5
+   }
+   
+   {:ok, reply} = channel 
+   |> Google.Pubsub.V1.Publisher.Stub.list_topics(
+        req, 
+        metadata: %{"authorization" => "#{type} #{token}"},
+        content_type: "application/grpc"
+      )
+   
+   # Note: The main PubsubGrpc API automatically handles authentication
+   # This manual approach is only needed for custom GRPC operations
+   ```
+
+### Method 3: Default Application Credentials
+
+If running on Google Cloud (GCE, GKE, Cloud Functions, etc.), credentials are automatically available:
+
+```elixir
+# No additional configuration needed when running on Google Cloud
+# The library automatically detects and uses the default credentials
+{:ok, topic} = PubsubGrpc.create_topic("my-project", "my-topic")
+```
+
+### Method 4: Development with gcloud CLI
+
+For development, you can use gcloud authentication:
+
+```bash
+# Authenticate with your Google account
+gcloud auth application-default login
+
+# Your application will use these credentials automatically
+```
+
+### Authentication Notes
+
+- **Emulator**: No authentication required when using the local emulator
+- **Production**: Always use service account keys or default application credentials
+- **Permissions**: Ensure your service account has the necessary Pub/Sub permissions:
+  - `pubsub.topics.create`, `pubsub.topics.delete`, `pubsub.topics.list`
+  - `pubsub.subscriptions.create`, `pubsub.subscriptions.delete`
+  - `pubsub.messages.publish`, `pubsub.messages.pull`, `pubsub.messages.ack`
 
 ## Examples
 
