@@ -4,7 +4,7 @@ defmodule PubsubGrpc.MixProject do
   def project do
     [
       app: :pubsub_grpc,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -15,6 +15,19 @@ defmodule PubsubGrpc.MixProject do
         "coveralls.post": :test,
         "coveralls.html": :test,
         "coveralls.cobertura": :test
+      ],
+
+      # Docs
+      name: "PubsubGrpc",
+      description: "Efficient Google Cloud Pub/Sub client using gRPC with connection pooling",
+      docs: [
+        main: "PubsubGrpc",
+        extras: ["README.md"]
+      ],
+      package: [
+        description: "Efficient Google Cloud Pub/Sub client using gRPC with NimblePool connection management",
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/your-username/pubsub_grpc"}
       ]
     ]
   end
@@ -33,7 +46,8 @@ defmodule PubsubGrpc.MixProject do
       {:nimble_pool, "~> 1.1.0"},
       {:grpc, "~> 0.10.1"},
       {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master"},
-      {:excoveralls, "~> 0.18", only: :test}
+      {:excoveralls, "~> 0.18", only: :test},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
 end

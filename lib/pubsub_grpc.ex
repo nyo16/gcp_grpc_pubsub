@@ -56,12 +56,12 @@ defmodule PubsubGrpc do
   ## Examples
 
       {:ok, topic} = PubsubGrpc.create_topic("my-project", "events")
-      {:error, %GRPC.RPCError{}} = PubsubGrpc.create_topic("my-project", "existing-topic")
+      {:error, %GRPC.RPCError{status: 6}} = PubsubGrpc.create_topic("my-project", "existing-topic")
 
   """
   def create_topic(project_id, topic_id) do
     topic_path = topic_path(project_id, topic_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
@@ -84,7 +84,7 @@ defmodule PubsubGrpc do
   """
   def delete_topic(project_id, topic_id) do
     topic_path = topic_path(project_id, topic_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
       Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request)
@@ -112,7 +112,7 @@ defmodule PubsubGrpc do
   """
   def list_topics(project_id, opts \\ []) do
     project_path = "projects/#{project_id}"
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.ListTopicsRequest{
         project: project_path,
@@ -123,7 +123,7 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, response} -> 
+      {:ok, response} ->
         {:ok, %{topics: response.topics, next_page_token: response.next_page_token}}
       error -> error
     end
@@ -155,7 +155,7 @@ defmodule PubsubGrpc do
   """
   def publish(project_id, topic_id, messages) when is_list(messages) do
     topic_path = topic_path(project_id, topic_id)
-    
+
     operation = fn channel, _params ->
       pubsub_messages = Enum.map(messages, fn msg ->
         %Google.Pubsub.V1.PubsubMessage{
@@ -182,7 +182,7 @@ defmodule PubsubGrpc do
   Convenience function to publish a single message.
 
   ## Parameters
-  - `project_id`: The Google Cloud project ID  
+  - `project_id`: The Google Cloud project ID
   - `topic_id`: The topic identifier
   - `data`: Message data (string)
   - `attributes`: Optional message attributes (map)
@@ -225,7 +225,7 @@ defmodule PubsubGrpc do
   def create_subscription(project_id, topic_id, subscription_id, opts \\ []) do
     topic_path = topic_path(project_id, topic_id)
     subscription_path = subscription_path(project_id, subscription_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.Subscription{
         name: subscription_path,
@@ -252,7 +252,7 @@ defmodule PubsubGrpc do
   """
   def delete_subscription(project_id, subscription_id) do
     subscription_path = subscription_path(project_id, subscription_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
       Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request)
@@ -290,7 +290,7 @@ defmodule PubsubGrpc do
   """
   def pull(project_id, subscription_id, max_messages \\ 10) do
     subscription_path = subscription_path(project_id, subscription_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.PullRequest{
         subscription: subscription_path,
@@ -326,7 +326,7 @@ defmodule PubsubGrpc do
   """
   def acknowledge(project_id, subscription_id, ack_ids) when is_list(ack_ids) do
     subscription_path = subscription_path(project_id, subscription_id)
-    
+
     operation = fn channel, _params ->
       request = %Google.Pubsub.V1.AcknowledgeRequest{
         subscription: subscription_path,
@@ -389,8 +389,8 @@ defmodule PubsubGrpc do
         # Create topic
         topic_req = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/batch-topic"}
         {:ok, _topic} = Google.Pubsub.V1.Publisher.Stub.create_topic(channel, topic_req)
-        
-        # Publish message  
+
+        # Publish message
         msg = %Google.Pubsub.V1.PubsubMessage{data: "Batch message"}
         pub_req = %Google.Pubsub.V1.PublishRequest{
           topic: "projects/my-project/topics/batch-topic",
