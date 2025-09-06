@@ -43,12 +43,13 @@ defmodule PubsubGrpc.Application do
   @impl true
   def start(_type, _args) do
     pool_size = Application.get_env(:pubsub_grpc, :default_pool_size, 5)
-    
+
     children = [
-      {PubsubGrpc.Connection, [
-        name: PubsubGrpc.ConnectionPool,
-        pool_size: pool_size
-      ]}
+      {PubsubGrpc.Connection,
+       [
+         name: PubsubGrpc.ConnectionPool,
+         pool_size: pool_size
+       ]}
     ]
 
     opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor]

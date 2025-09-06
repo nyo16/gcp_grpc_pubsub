@@ -58,7 +58,7 @@ Add `pubsub_grpc` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:pubsub_grpc, "~> 0.1.0"}
+    {:pubsub_grpc, "~> 0.2.0"}
   ]
 end
 ```

@@ -47,6 +47,7 @@ defmodule PubsubGrpc.Auth do
       nil ->
         # Fallback to gcloud CLI or default credentials
         get_token_fallback()
+
       goth_name ->
         # Use Goth library
         get_token_from_goth(goth_name)
@@ -72,6 +73,7 @@ defmodule PubsubGrpc.Auth do
     case get_token() do
       {:ok, token} ->
         [metadata: %{"authorization" => token}]
+
       {:error, _reason} ->
         []
     end
@@ -84,6 +86,7 @@ defmodule PubsubGrpc.Auth do
       case Goth.fetch(goth_name) do
         {:ok, %{token: token, type: type}} ->
           {:ok, "#{type} #{token}"}
+
         {:error, reason} ->
           # Fallback to CLI if Goth fails
           case get_token_fallback() do
@@ -100,10 +103,13 @@ defmodule PubsubGrpc.Auth do
   defp get_token_fallback do
     try do
       # Try gcloud CLI first
-      case System.cmd("gcloud", ["auth", "application-default", "print-access-token"], stderr_to_stdout: true) do
+      case System.cmd("gcloud", ["auth", "application-default", "print-access-token"],
+             stderr_to_stdout: true
+           ) do
         {token_output, 0} ->
           token = String.trim(token_output)
           {:ok, "Bearer #{token}"}
+
         {error_output, _} ->
           {:error, {:gcloud_error, String.trim(error_output)}}
       end

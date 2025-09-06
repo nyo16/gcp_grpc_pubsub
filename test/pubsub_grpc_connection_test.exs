@@ -1,6 +1,6 @@
 defmodule PubsubGrpcConnectionTest do
   use ExUnit.Case
-  
+
   alias PubsubGrpc.Client
 
   @moduletag :connection_pool
@@ -18,13 +18,15 @@ defmodule PubsubGrpcConnectionTest do
       end
 
       # This should work even without a real GRPC connection if the pool is working
-      result = case Client.execute(simple_operation) do
-        {:ok, "test_result"} -> :ok
-        {:error, _} -> :expected_error
-        other -> other
-      end
+      result =
+        case Client.execute(simple_operation) do
+          {:ok, "test_result"} -> :ok
+          {:error, _} -> :expected_error
+          other -> other
+        end
 
-      assert result in [:ok, :expected_error], "Pool should be functional, got: #{inspect(result)}"
+      assert result in [:ok, :expected_error],
+             "Pool should be functional, got: #{inspect(result)}"
     end
 
     test "connection pool handles multiple concurrent operations" do
@@ -35,11 +37,12 @@ defmodule PubsubGrpcConnectionTest do
         {:ok, params[:id]}
       end
 
-      tasks = Enum.map(1..10, fn i ->
-        Task.async(fn ->
-          Client.execute(operation, %{id: i})
+      tasks =
+        Enum.map(1..10, fn i ->
+          Task.async(fn ->
+            Client.execute(operation, %{id: i})
+          end)
         end)
-      end)
 
       results = Enum.map(tasks, &Task.await/1)
 
@@ -51,7 +54,8 @@ defmodule PubsubGrpcConnectionTest do
         case result do
           {:ok, id} when is_integer(id) -> :ok
           {:error, _} -> :expected_connection_error
-          :ok -> :ok  # Some operations might return bare :ok
+          # Some operations might return bare :ok
+          :ok -> :ok
           other -> flunk("Unexpected result: #{inspect(other)}")
         end
       end)
@@ -65,7 +69,7 @@ defmodule PubsubGrpcConnectionTest do
 
       # This should return an error but not crash the pool
       result = Client.execute(error_operation)
-      
+
       # NimblePool might return different error formats
       case result do
         {:error, _} -> :ok
@@ -81,25 +85,29 @@ defmodule PubsubGrpcConnectionTest do
         {:ok, "after_error"}
       end
 
-      result2 = case Client.execute(simple_operation) do
-        {:ok, "after_error"} -> :ok
-        {:error, _} -> :expected_connection_error
-        other -> other
-      end
+      result2 =
+        case Client.execute(simple_operation) do
+          {:ok, "after_error"} -> :ok
+          {:error, _} -> :expected_connection_error
+          other -> other
+        end
 
       assert result2 in [:ok, :expected_connection_error]
     end
 
     test "with_connection function works" do
-      result = Client.with_connection(fn _conn ->
-        {:ok, "with_connection_works"}
-      end)
+      result =
+        Client.with_connection(fn _conn ->
+          {:ok, "with_connection_works"}
+        end)
 
       # Should either work or return a connection error
       case result do
         {:ok, "with_connection_works"} -> :ok
-        {:error, _} -> :expected_connection_error  # Could be connection error if no emulator
-        :ok -> :ok  # Some operations might return bare :ok
+        # Could be connection error if no emulator
+        {:error, _} -> :expected_connection_error
+        # Some operations might return bare :ok
+        :ok -> :ok
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
@@ -108,7 +116,7 @@ defmodule PubsubGrpcConnectionTest do
   describe "connection configuration" do
     test "reads emulator configuration" do
       config = Application.get_env(:pubsub_grpc, :emulator)
-      
+
       assert config != nil
       assert config[:project_id] == "test-project-id"
       assert config[:host] == "localhost"

@@ -61,19 +61,24 @@ defmodule PubsubGrpc.Connection do
         case create_connection() do
           {:ok, new_channel} ->
             {:ok, new_channel, new_channel, pool_state}
+
           {:error, reason} ->
             {:remove, reason}
         end
+
       existing_channel ->
         case is_connection_alive?(existing_channel) do
           true ->
             {:ok, existing_channel, existing_channel, pool_state}
+
           false ->
             # Connection is dead, create a new one
             cleanup_connection(existing_channel)
+
             case create_connection() do
               {:ok, new_channel} ->
                 {:ok, new_channel, new_channel, pool_state}
+
               {:error, reason} ->
                 {:remove, reason}
             end
@@ -86,12 +91,14 @@ defmodule PubsubGrpc.Connection do
     case is_connection_alive?(channel) do
       true ->
         {:ok, channel, pool_state}
+
       false ->
         cleanup_connection(channel)
         # Create a new connection to replace the dead one
         case create_connection() do
           {:ok, new_channel} ->
             {:ok, new_channel, pool_state}
+
           {:error, _reason} ->
             {:remove, :down}
         end
@@ -159,7 +166,7 @@ defmodule PubsubGrpc.Connection do
       pool_size: Keyword.get(opts, :pool_size, 5),
       name: Keyword.get(opts, :name, __MODULE__)
     ]
-    
+
     NimblePool.start_link(pool_opts)
   end
 
@@ -192,10 +199,16 @@ defmodule PubsubGrpc.Connection do
   """
   def execute(pool, operation_fn, params \\ []) when is_function(operation_fn, 2) do
     try do
-      NimblePool.checkout!(pool, :checkout, fn _from, channel ->
-        result = operation_fn.(channel, params)
-        {result, channel}
-      end, 15_000)  # 15 second timeout for GRPC connection creation
+      NimblePool.checkout!(
+        pool,
+        :checkout,
+        fn _from, channel ->
+          result = operation_fn.(channel, params)
+          {result, channel}
+        end,
+        # 15 second timeout for GRPC connection creation
+        15_000
+      )
     rescue
       error -> {:error, error}
     catch
@@ -226,10 +239,16 @@ defmodule PubsubGrpc.Connection do
 
   """
   def with_connection(pool, fun) when is_function(fun, 1) do
-    NimblePool.checkout!(pool, :checkout, fn _from, channel ->
-      result = fun.(channel)
-      {result, channel}
-    end, 15_000)  # 15 second timeout for GRPC connection creation
+    NimblePool.checkout!(
+      pool,
+      :checkout,
+      fn _from, channel ->
+        result = fun.(channel)
+        {result, channel}
+      end,
+      # 15 second timeout for GRPC connection creation
+      15_000
+    )
   end
 
   # Private functions
@@ -243,15 +262,17 @@ defmodule PubsubGrpc.Connection do
         credentials = GRPC.Credential.new(ssl: [])
 
         case GRPC.Stub.connect("pubsub.googleapis.com:443",
-          cred: credentials,
-          adapter_opts: [
-            http2_opts: %{
-              keepalive: 30_000  # Send keepalive every 30 seconds
-            }
-          ]
-        ) do
+               cred: credentials,
+               adapter_opts: [
+                 http2_opts: %{
+                   # Send keepalive every 30 seconds
+                   keepalive: 30_000
+                 }
+               ]
+             ) do
           {:ok, channel} ->
             {:ok, channel}
+
           {:error, reason} ->
             {:error, reason}
         end
@@ -266,20 +287,26 @@ defmodule PubsubGrpc.Connection do
   # Create emulator connection with retry logic
   defp create_emulator_connection(host, port, retries_left) when retries_left > 0 do
     case GRPC.Stub.connect(host, port,
-      adapter_opts: [
-        http2_opts: %{
-          keepalive: 30_000  # Send keepalive every 30 seconds
-        }
-      ]
-    ) do
+           adapter_opts: [
+             http2_opts: %{
+               # Send keepalive every 30 seconds
+               keepalive: 30_000
+             }
+           ]
+         ) do
       {:ok, channel} ->
         {:ok, channel}
+
       {:error, _reason} when retries_left > 1 ->
         # Wait and retry
         :timer.sleep(1000)
         create_emulator_connection(host, port, retries_left - 1)
+
       {:error, reason} ->
-        IO.warn("Failed to connect to emulator at #{host}:#{port} after retries: #{inspect(reason)}")
+        IO.warn(
+          "Failed to connect to emulator at #{host}:#{port} after retries: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -289,7 +316,9 @@ defmodule PubsubGrpc.Connection do
   end
 
   defp is_connection_alive?(nil), do: false
-  defp is_connection_alive?(%GRPC.Channel{adapter_payload: %{conn_pid: pid}} = channel) when is_pid(pid) do
+
+  defp is_connection_alive?(%GRPC.Channel{adapter_payload: %{conn_pid: pid}} = channel)
+       when is_pid(pid) do
     if Process.alive?(pid) do
       # Additional check: try a simple operation to ensure connection is actually working
       # This helps detect channels that are technically alive but have timed out

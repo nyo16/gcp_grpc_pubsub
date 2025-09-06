@@ -16,6 +16,7 @@ defmodule PubsubGrpc.EmulatorHelper do
         IO.puts("Emulator started: #{output}")
         wait_for_emulator()
         :ok
+
       {error, _} ->
         IO.puts("Failed to start emulator: #{error}")
         {:error, :emulator_start_failed}
@@ -38,10 +39,16 @@ defmodule PubsubGrpc.EmulatorHelper do
       raise "Emulator failed to start within timeout"
     end
 
-    case :gen_tcp.connect(String.to_charlist(@emulator_host), @emulator_port, [:binary, active: false], 1000) do
+    case :gen_tcp.connect(
+           String.to_charlist(@emulator_host),
+           @emulator_port,
+           [:binary, active: false],
+           1000
+         ) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
         :ok
+
       {:error, _} ->
         :timer.sleep(1000)
         wait_for_emulator(retries - 1)
@@ -88,20 +95,25 @@ defmodule PubsubGrpc.EmulatorHelper do
   """
   def cleanup_topic(topic_name) do
     topic_path = topic_path(topic_name)
-    
+
     delete_topic_operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteTopicRequest{
         topic: topic_path
       }
+
       Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request)
     end
 
     case PubsubGrpc.Client.execute(delete_topic_operation) do
       {:ok, _} -> :ok
-      {:error, _} -> :ok  # Ignore errors during cleanup
-      :ok -> :ok  # Handle bare :ok returns
-      :error -> :ok  # Handle bare :error returns
-      _ -> :ok  # Ignore any other result during cleanup
+      # Ignore errors during cleanup
+      {:error, _} -> :ok
+      # Handle bare :ok returns
+      :ok -> :ok
+      # Handle bare :error returns
+      :error -> :ok
+      # Ignore any other result during cleanup
+      _ -> :ok
     end
   end
 
@@ -110,20 +122,25 @@ defmodule PubsubGrpc.EmulatorHelper do
   """
   def cleanup_subscription(subscription_name) do
     subscription_path = subscription_path(subscription_name)
-    
+
     delete_subscription_operation = fn channel, _params ->
       request = %Google.Pubsub.V1.DeleteSubscriptionRequest{
         subscription: subscription_path
       }
+
       Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request)
     end
 
     case PubsubGrpc.Client.execute(delete_subscription_operation) do
       {:ok, _} -> :ok
-      {:error, _} -> :ok  # Ignore errors during cleanup
-      :ok -> :ok  # Handle bare :ok returns
-      :error -> :ok  # Handle bare :error returns
-      _ -> :ok  # Ignore any other result during cleanup
+      # Ignore errors during cleanup
+      {:error, _} -> :ok
+      # Handle bare :ok returns
+      :ok -> :ok
+      # Handle bare :error returns
+      :error -> :ok
+      # Ignore any other result during cleanup
+      _ -> :ok
     end
   end
 end

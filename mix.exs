@@ -38,7 +38,8 @@ defmodule PubsubGrpc.MixProject do
 
   defp package do
     [
-      description: "Efficient Google Cloud Pub/Sub client using gRPC with NimblePool connection management",
+      description:
+        "Efficient Google Cloud Pub/Sub client using gRPC with NimblePool connection management",
       licenses: ["MIT"],
       links: %{"GitHub" => "https://github.com/nyo16/gcp_grpc_pubsub"},
       files: ~w(lib .formatter.exs mix.exs README* LICENSE*)

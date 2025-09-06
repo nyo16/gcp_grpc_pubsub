@@ -9,7 +9,7 @@ defmodule PubsubGrpc do
   ## Configuration
 
   ### Production (Google Cloud)
-  
+
   For production use, the library connects to `pubsub.googleapis.com:443` and supports multiple authentication methods:
 
   #### Option 1: Goth Library (Recommended)
@@ -142,6 +142,7 @@ defmodule PubsubGrpc do
         page_size: Keyword.get(opts, :page_size, 0),
         page_token: Keyword.get(opts, :page_token, "")
       }
+
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, auth_opts)
     end
@@ -149,7 +150,9 @@ defmodule PubsubGrpc do
     case Client.execute(operation) do
       {:ok, response} ->
         {:ok, %{topics: response.topics, next_page_token: response.next_page_token}}
-      error -> error
+
+      error ->
+        error
     end
   end
 
@@ -181,12 +184,13 @@ defmodule PubsubGrpc do
     topic_path = topic_path(project_id, topic_id)
 
     operation = fn channel, _params ->
-      pubsub_messages = Enum.map(messages, fn msg ->
-        %Google.Pubsub.V1.PubsubMessage{
-          data: Map.get(msg, :data, ""),
-          attributes: Map.get(msg, :attributes, %{})
-        }
-      end)
+      pubsub_messages =
+        Enum.map(messages, fn msg ->
+          %Google.Pubsub.V1.PubsubMessage{
+            data: Map.get(msg, :data, ""),
+            attributes: Map.get(msg, :attributes, %{})
+          }
+        end)
 
       request = %Google.Pubsub.V1.PublishRequest{
         topic: topic_path,
@@ -257,6 +261,7 @@ defmodule PubsubGrpc do
         topic: topic_path,
         ack_deadline_seconds: Keyword.get(opts, :ack_deadline_seconds, 60)
       }
+
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, auth_opts)
     end
@@ -323,6 +328,7 @@ defmodule PubsubGrpc do
         subscription: subscription_path,
         max_messages: max_messages
       }
+
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Subscriber.Stub.pull(channel, request, auth_opts)
     end
@@ -360,6 +366,7 @@ defmodule PubsubGrpc do
         subscription: subscription_path,
         ack_ids: ack_ids
       }
+
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request, auth_opts)
     end
