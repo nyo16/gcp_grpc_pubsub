@@ -51,7 +51,7 @@ defmodule PubsubGrpc.MixProject do
     [
       {:grpc_connection_pool, github: "nyo16/grpc_connection_pool"},
       {:grpc, "~> 0.10.2"},
-      {:googleapis_proto_ex, "~> 0.3.0"},
+      {:googleapis_proto_ex, "~> 0.3.1"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:goth, "~> 1.4", optional: true}
