@@ -4,7 +4,7 @@ defmodule PubsubGrpc do
 
   This module provides a convenient API for common Pub/Sub operations like creating topics,
   publishing messages, pulling messages, and managing subscriptions using a connection pool
-  powered by NimblePool.
+  powered by Poolex.
 
   ## Configuration
 
@@ -83,7 +83,7 @@ defmodule PubsubGrpc do
   def create_topic(project_id, topic_id) do
     topic_path = topic_path(project_id, topic_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
@@ -107,7 +107,7 @@ defmodule PubsubGrpc do
   def delete_topic(project_id, topic_id) do
     topic_path = topic_path(project_id, topic_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request, auth_opts)
@@ -136,7 +136,7 @@ defmodule PubsubGrpc do
   def list_topics(project_id, opts \\ []) do
     project_path = "projects/#{project_id}"
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.ListTopicsRequest{
         project: project_path,
         page_size: Keyword.get(opts, :page_size, 0),
@@ -183,7 +183,7 @@ defmodule PubsubGrpc do
   def publish(project_id, topic_id, messages) when is_list(messages) do
     topic_path = topic_path(project_id, topic_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       pubsub_messages =
         Enum.map(messages, fn msg ->
           %Google.Pubsub.V1.PubsubMessage{
@@ -255,7 +255,7 @@ defmodule PubsubGrpc do
     topic_path = topic_path(project_id, topic_id)
     subscription_path = subscription_path(project_id, subscription_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.Subscription{
         name: subscription_path,
         topic: topic_path,
@@ -284,7 +284,7 @@ defmodule PubsubGrpc do
   def delete_subscription(project_id, subscription_id) do
     subscription_path = subscription_path(project_id, subscription_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
       auth_opts = PubsubGrpc.Auth.request_opts()
       Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request, auth_opts)
@@ -323,7 +323,7 @@ defmodule PubsubGrpc do
   def pull(project_id, subscription_id, max_messages \\ 10) do
     subscription_path = subscription_path(project_id, subscription_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.PullRequest{
         subscription: subscription_path,
         max_messages: max_messages
@@ -361,7 +361,7 @@ defmodule PubsubGrpc do
   def acknowledge(project_id, subscription_id, ack_ids) when is_list(ack_ids) do
     subscription_path = subscription_path(project_id, subscription_id)
 
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.AcknowledgeRequest{
         subscription: subscription_path,
         ack_ids: ack_ids
@@ -384,8 +384,10 @@ defmodule PubsubGrpc do
   by the convenience functions above.
 
   ## Parameters
-  - `operation_fn`: A function that takes `(channel, params)` and returns the operation result
-  - `params`: Optional parameters to pass to the operation function
+  - `operation_fn`: A function that takes `(channel)` and returns the operation result
+  - `opts`: Optional parameters
+    - `:pool` - Pool name to use (default: PubsubGrpc.ConnectionPool)
+    - `:checkout_timeout` - Timeout for checking out connections
 
   ## Returns
   - Operation result from the GRPC call
@@ -394,16 +396,17 @@ defmodule PubsubGrpc do
   ## Examples
 
       # Custom operation
-      operation = fn channel, _params ->
+      operation = fn channel ->
         request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request)
+        auth_opts = PubsubGrpc.Auth.request_opts()
+        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end
 
       {:ok, topic} = PubsubGrpc.execute(operation)
 
   """
-  def execute(operation_fn, params \\ []) do
-    Client.execute(operation_fn, params)
+  def execute(operation_fn, opts \\ []) do
+    Client.execute(operation_fn, opts)
   end
 
   @doc """
@@ -422,9 +425,11 @@ defmodule PubsubGrpc do
   ## Examples
 
       result = PubsubGrpc.with_connection(fn channel ->
+        auth_opts = PubsubGrpc.Auth.request_opts()
+        
         # Create topic
         topic_req = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/batch-topic"}
-        {:ok, _topic} = Google.Pubsub.V1.Publisher.Stub.create_topic(channel, topic_req)
+        {:ok, _topic} = Google.Pubsub.V1.Publisher.Stub.create_topic(channel, topic_req, auth_opts)
 
         # Publish message
         msg = %Google.Pubsub.V1.PubsubMessage{data: "Batch message"}
@@ -432,12 +437,12 @@ defmodule PubsubGrpc do
           topic: "projects/my-project/topics/batch-topic",
           messages: [msg]
         }
-        Google.Pubsub.V1.Publisher.Stub.publish(channel, pub_req)
+        Google.Pubsub.V1.Publisher.Stub.publish(channel, pub_req, auth_opts)
       end)
 
   """
   def with_connection(fun) when is_function(fun, 1) do
-    Client.with_connection(fun)
+    Client.execute(fun)
   end
 
   # Private helper functions
