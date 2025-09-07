@@ -49,7 +49,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:grpc_connection_pool, "~> 0.1.1"},
+      {:grpc_connection_pool, "~> 0.1.2"},
       {:grpc, "~> 0.10.2"},
       {:googleapis_proto_ex, "~> 0.3.1"},
       {:excoveralls, "~> 0.18", only: :test},
