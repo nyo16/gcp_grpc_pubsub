@@ -59,9 +59,13 @@ defmodule PubsubGrpc do
       ack_ids = Enum.map(messages, & &1.ack_id)
       :ok = PubsubGrpc.acknowledge("my-project", "my-sub", ack_ids)
 
+      # Schema management (v0.3.1+)
+      {:ok, schemas} = PubsubGrpc.list_schemas("my-project")
+      {:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema")
+
   """
 
-  alias PubsubGrpc.Client
+  alias PubsubGrpc.{Client, Schema}
 
   @doc """
   Creates a new Pub/Sub topic.
@@ -465,6 +469,144 @@ defmodule PubsubGrpc do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  # Schema management functions
+
+  @doc """
+  Lists schemas in a project.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `opts`: Optional parameters
+    - `:view` - Schema view level (`:basic` or `:full`, default: `:basic`)
+    - `:page_size` - Maximum number of schemas to return
+    - `:page_token` - Token for pagination
+
+  ## Returns
+  - `{:ok, %{schemas: schemas, next_page_token: token}}` - List of schemas
+  - `{:error, reason}` - Error listing schemas
+
+  ## Examples
+
+      {:ok, result} = PubsubGrpc.list_schemas("my-project")
+      Enum.each(result.schemas, fn schema ->
+        IO.puts("Schema: \#{schema.name} (\#{schema.type})")
+      end)
+
+  """
+  defdelegate list_schemas(project_id, opts \\ []), to: Schema
+
+  @doc """
+  Gets details of a specific schema.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `schema_id`: The schema identifier
+  - `opts`: Optional parameters
+    - `:view` - Schema view level (`:basic` or `:full`, default: `:full`)
+
+  ## Returns
+  - `{:ok, schema}` - Schema details
+  - `{:error, reason}` - Error getting schema
+
+  ## Examples
+
+      {:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema")
+      IO.puts("Schema definition: \#{schema.definition}")
+
+  """
+  defdelegate get_schema(project_id, schema_id, opts \\ []), to: Schema
+
+  @doc """
+  Creates a new schema.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `schema_id`: The schema identifier
+  - `type`: Schema type (`:protocol_buffer` or `:avro`)
+  - `definition`: The schema definition string
+
+  ## Returns
+  - `{:ok, schema}` - Created schema
+  - `{:error, reason}` - Error creating schema
+
+  ## Examples
+
+      definition = '''
+      syntax = "proto3";
+      message User { string name = 1; }
+      '''
+      
+      {:ok, schema} = PubsubGrpc.create_schema("my-project", "user-schema", :protocol_buffer, definition)
+
+  """
+  defdelegate create_schema(project_id, schema_id, type, definition), to: Schema
+
+  @doc """
+  Deletes a schema.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `schema_id`: The schema identifier
+
+  ## Returns
+  - `:ok` - Successfully deleted schema
+  - `{:error, reason}` - Error deleting schema
+
+  ## Examples
+
+      :ok = PubsubGrpc.delete_schema("my-project", "old-schema")
+
+  """
+  defdelegate delete_schema(project_id, schema_id), to: Schema
+
+  @doc """
+  Validates a schema definition.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `type`: Schema type (`:protocol_buffer` or `:avro`)
+  - `definition`: The schema definition string
+
+  ## Returns
+  - `{:ok, validation_result}` - Schema is valid
+  - `{:error, reason}` - Validation error
+
+  ## Examples
+
+      definition = '''
+      syntax = "proto3";
+      message User { string name = 1; }
+      '''
+      
+      {:ok, result} = PubsubGrpc.validate_schema("my-project", :protocol_buffer, definition)
+
+  """
+  defdelegate validate_schema(project_id, type, definition), to: Schema
+
+  @doc """
+  Lists revisions of a schema.
+
+  ## Parameters
+  - `project_id`: The Google Cloud project ID
+  - `schema_id`: The schema identifier
+  - `opts`: Optional parameters
+    - `:view` - Schema view level (`:basic` or `:full`, default: `:basic`)
+    - `:page_size` - Maximum number of revisions to return
+    - `:page_token` - Token for pagination
+
+  ## Returns
+  - `{:ok, %{schemas: schema_revisions, next_page_token: token}}` - List of schema revisions
+  - `{:error, reason}` - Error listing schema revisions
+
+  ## Examples
+
+      {:ok, result} = PubsubGrpc.list_schema_revisions("my-project", "my-schema")
+
+  """
+  defdelegate list_schema_revisions(project_id, schema_id, opts \\ []), to: Schema
+
+  # TODO: Add validate_message function when oneof field handling is implemented
 
   # Private helper functions
 
