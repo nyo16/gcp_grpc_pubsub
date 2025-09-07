@@ -6,6 +6,7 @@ A library for interacting with Google Cloud Pub/Sub using gRPC with **[GrpcConne
 
 - 🚀 **Robust Connection Pooling**: Powered by [GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool) library with health monitoring and automatic recovery
 - 📦 **Batch Publishing**: High-performance batch message publishing (100-1000+ messages per call)
+- 📋 **Schema Management**: Complete schema registry support with Protocol Buffer and Avro schemas (v0.3.1+)
 - 🔐 **Multiple Authentication**: Goth integration, gcloud CLI, service accounts, and GCE metadata
 - 🔄 **Auto-Recovery**: Automatic connection health checking, retry logic with exponential backoff
 - 🌐 **Environment-Agnostic**: Seamlessly works with production Google Cloud and local emulator
@@ -196,6 +197,191 @@ end)
 ack_ids = Enum.map(received_messages, & &1.ack_id)
 :ok = PubsubGrpc.acknowledge("my-project", "processor", ack_ids)
 ```
+
+### Schema Management (v0.3.1+)
+
+Google Cloud Pub/Sub schemas define the structure and format of messages, enabling message validation and governance. PubsubGrpc supports comprehensive schema management operations.
+
+#### 1. Listing Schemas
+
+```elixir
+# List all schemas in a project
+{:ok, result} = PubsubGrpc.list_schemas("my-project")
+
+IO.puts("Found #{length(result.schemas)} schemas:")
+Enum.each(result.schemas, fn schema ->
+  IO.puts("  - #{schema.name} (#{schema.type})")
+end)
+
+# List with full details
+{:ok, result} = PubsubGrpc.list_schemas("my-project", view: :full)
+
+# List with pagination
+{:ok, result} = PubsubGrpc.list_schemas("my-project", 
+  page_size: 10,
+  page_token: "next_page_token"
+)
+```
+
+#### 2. Getting Schema Details
+
+```elixir
+# Get specific schema with full details
+{:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema")
+
+IO.puts("Schema: #{schema.name}")
+IO.puts("Type: #{schema.type}")
+IO.puts("Revision: #{schema.revision_id}")
+IO.puts("Definition: #{schema.definition}")
+
+# Get basic details only (no definition)
+{:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema", view: :basic)
+```
+
+#### 3. Creating Schemas
+
+##### Protocol Buffer Schema
+
+```elixir
+# Define Protocol Buffer schema
+protobuf_definition = '''
+syntax = "proto3";
+
+message UserEvent {
+  string user_id = 1;
+  string event_type = 2; 
+  int64 timestamp = 3;
+  map<string, string> attributes = 4;
+}
+'''
+
+# Create the schema
+{:ok, schema} = PubsubGrpc.create_schema(
+  "my-project",
+  "user-event-schema",
+  :protocol_buffer,
+  protobuf_definition
+)
+
+IO.puts("Created schema: #{schema.name}")
+```
+
+##### Avro Schema
+
+```elixir
+# Define Avro schema
+avro_definition = '''
+{
+  "type": "record",
+  "name": "UserEvent", 
+  "namespace": "events",
+  "fields": [
+    {"name": "user_id", "type": "string"},
+    {"name": "event_type", "type": "string"},
+    {"name": "timestamp", "type": "long"},
+    {"name": "attributes", "type": {"type": "map", "values": "string"}}
+  ]
+}
+'''
+
+# Create the Avro schema
+{:ok, schema} = PubsubGrpc.create_schema(
+  "my-project", 
+  "user-event-avro-schema",
+  :avro,
+  avro_definition
+)
+```
+
+#### 4. Schema Validation
+
+```elixir
+# Validate schema definition before creating
+{:ok, validation_result} = PubsubGrpc.validate_schema(
+  "my-project",
+  :protocol_buffer,
+  protobuf_definition
+)
+
+# Check if validation passed
+case validation_result do
+  %{} -> IO.puts("✓ Schema is valid")
+  _error -> IO.puts("✗ Schema validation failed")
+end
+```
+
+#### 5. Managing Schema Revisions
+
+```elixir
+# List all revisions of a schema
+{:ok, result} = PubsubGrpc.list_schema_revisions("my-project", "my-schema")
+
+IO.puts("Schema has #{length(result.schemas)} revisions:")
+Enum.each(result.schemas, fn revision ->
+  IO.puts("  - Revision #{revision.revision_id} (#{revision.revision_create_time})")
+end)
+```
+
+#### 6. Deleting Schemas
+
+```elixir
+# Delete a schema (removes all revisions)
+case PubsubGrpc.delete_schema("my-project", "old-schema") do
+  :ok -> IO.puts("✓ Schema deleted successfully")
+  {:error, %GRPC.RPCError{status: 5}} -> IO.puts("Schema not found")
+  {:error, reason} -> IO.puts("Error: #{inspect(reason)}")
+end
+```
+
+#### 7. Complete Schema Workflow
+
+```elixir
+project_id = "my-project"
+schema_id = "order-events"
+
+# 1. Define schema
+schema_definition = '''
+syntax = "proto3";
+
+message OrderEvent {
+  string order_id = 1;
+  string customer_id = 2;
+  string event_type = 3; // "created", "paid", "shipped", "delivered"
+  double amount = 4;
+  int64 timestamp = 5;
+}
+'''
+
+# 2. Validate schema before creation
+{:ok, _validation} = PubsubGrpc.validate_schema(project_id, :protocol_buffer, schema_definition)
+
+# 3. Create the schema
+{:ok, schema} = PubsubGrpc.create_schema(project_id, schema_id, :protocol_buffer, schema_definition)
+IO.puts("Created schema: #{schema.name}")
+
+# 4. List schemas to verify
+{:ok, result} = PubsubGrpc.list_schemas(project_id)
+schema_names = Enum.map(result.schemas, & &1.name)
+IO.puts("Available schemas: #{Enum.join(schema_names, ", ")}")
+
+# 5. Get schema details
+{:ok, retrieved_schema} = PubsubGrpc.get_schema(project_id, schema_id)
+IO.puts("Schema revision: #{retrieved_schema.revision_id}")
+
+# 6. Use schema with topics (schemas can be attached to topics)
+{:ok, _topic} = PubsubGrpc.create_topic(project_id, "order-events-topic")
+
+# 7. Clean up when done
+:ok = PubsubGrpc.delete_schema(project_id, schema_id)
+```
+
+### Schema Best Practices
+
+1. **Validate First**: Always validate schema definitions before creating
+2. **Use Meaningful Names**: Schema IDs should be descriptive and follow naming conventions
+3. **Version Management**: Use schema revisions for backward-compatible evolution
+4. **Type Choice**: Choose Protocol Buffer for typed messages, Avro for flexible schemas
+5. **Documentation**: Include clear field descriptions in your schema definitions
 
 ### Advanced API (Lower Level)
 
