@@ -39,7 +39,7 @@ defmodule PubsubGrpc.MixProject do
   defp package do
     [
       description:
-        "Efficient Google Cloud Pub/Sub client using gRPC with Poolex connection management",
+        "Efficient Google Cloud Pub/Sub client using gRPC with GrpcConnectionPool library",
       licenses: ["MIT"],
       links: %{"GitHub" => "https://github.com/nyo16/gcp_grpc_pubsub"},
       files: ~w(lib .formatter.exs mix.exs README* LICENSE*)
@@ -49,7 +49,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:poolex, "~> 1.4.1"},
+      {:grpc_connection_pool, github: "nyo16/grpc_connection_pool"},
       {:grpc, "~> 0.10.2"},
       {:googleapis_proto_ex, "~> 0.3.0"},
       {:excoveralls, "~> 0.18", only: :test},

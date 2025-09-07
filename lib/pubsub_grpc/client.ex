@@ -1,17 +1,17 @@
 defmodule PubsubGrpc.Client do
   @moduledoc """
-  Client module for interacting with Google Cloud Pub/Sub using GRPC connections.
+  Client module for interacting with Google Cloud Pub/Sub using gRPC connections.
 
-  This module provides a convenient wrapper around `PubsubGrpc.ConnectionPool` that
-  automatically uses the default connection pool.
+  This module provides a convenient wrapper around the `GrpcConnectionPool` library that
+  automatically uses the default connection pool configured for Pub/Sub.
 
   For most use cases, you should use the main `PubsubGrpc` module instead of this one,
   as it provides a higher-level API for common operations.
 
   ## When to use this module
 
-  - When you need to execute custom GRPC operations not covered by the main API
-  - When you want to work directly with GRPC channels for advanced use cases
+  - When you need to execute custom gRPC operations not covered by the main API
+  - When you want to work directly with gRPC channels for advanced use cases
   - When building higher-level abstractions on top of the connection pool
 
   ## Examples
@@ -19,22 +19,23 @@ defmodule PubsubGrpc.Client do
       # Execute a custom operation
       operation = fn channel ->
         request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request)
+        auth_opts = PubsubGrpc.Auth.request_opts()
+        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end
       
-      {:ok, topic} = PubsubGrpc.Client.execute(operation)
+      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation)
 
       # Execute on a custom pool
-      {:ok, topic} = PubsubGrpc.Client.execute(operation, pool: MyApp.CustomPool)
+      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation, pool: MyApp.CustomPool)
 
   """
 
-  alias PubsubGrpc.ConnectionPool
+  @default_pool PubsubGrpc.ConnectionPool
 
   @doc """
-  Execute a GRPC operation using a connection from the default pool.
+  Execute a gRPC operation using a connection from the default Pub/Sub pool.
 
-  This is a convenience function that uses the default connection pool.
+  This is a convenience function that uses the default Pub/Sub connection pool.
   For custom pools, specify the `:pool` option.
 
   ## Parameters
@@ -44,18 +45,19 @@ defmodule PubsubGrpc.Client do
     - `:checkout_timeout` - Timeout for checking out connections
 
   ## Returns
-  - Result from the operation function
+  - Result from the operation function (wrapped in {:ok, result})
   - `{:error, reason}` - Error during execution or connection checkout
 
   ## Examples
 
       operation = fn channel ->
         request = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/test"}
-        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
+        auth_opts = PubsubGrpc.Auth.request_opts()
+        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
       end
 
-      {:ok, topic} = PubsubGrpc.Client.execute(operation)
-      {:ok, topic} = PubsubGrpc.Client.execute(operation, pool: MyApp.CustomPool)
+      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation)
+      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation, pool: MyApp.CustomPool)
 
   """
   @spec execute(function(), keyword()) :: any()
@@ -63,7 +65,8 @@ defmodule PubsubGrpc.Client do
 
   # Handle 1-arity functions (new API)
   def execute(operation_fn, opts) when is_function(operation_fn, 1) do
-    ConnectionPool.execute(operation_fn, opts)
+    pool_name = opts[:pool] || @default_pool
+    GrpcConnectionPool.execute(operation_fn, pool: pool_name)
   end
 
   # Handle 2-arity functions (backward compatibility)
@@ -71,8 +74,8 @@ defmodule PubsubGrpc.Client do
     # Wrap the 2-arity function to be 1-arity
     wrapped_fn = fn channel -> operation_fn.(channel, params) end
     
-    opts = if is_list(params), do: [], else: []
-    ConnectionPool.execute(wrapped_fn, opts)
+    pool_name = if is_list(params), do: @default_pool, else: @default_pool
+    GrpcConnectionPool.execute(wrapped_fn, pool: pool_name)
   end
 
   @doc """
@@ -103,7 +106,7 @@ defmodule PubsubGrpc.Client do
   """
   @spec status(keyword()) :: map()
   def status(opts \\ []) do
-    pool_name = opts[:pool] || PubsubGrpc.ConnectionPool
-    ConnectionPool.status(pool_name)
+    pool_name = opts[:pool] || @default_pool
+    GrpcConnectionPool.status(pool_name)
   end
 end

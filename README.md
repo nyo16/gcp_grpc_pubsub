@@ -1,14 +1,15 @@
 # PubsubGrpc
 
-A library for interacting with Google Cloud Pub/Sub using gRPC with **NimblePool** connection pooling.
+A library for interacting with Google Cloud Pub/Sub using gRPC with **[GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool)** connection pooling.
 
 ## Features
 
-- 🚀 **Eager Connection Pooling**: All GRPC connections pre-established at startup for zero-latency first requests
+- 🚀 **Robust Connection Pooling**: Powered by [GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool) library with health monitoring and automatic recovery
 - 📦 **Batch Publishing**: High-performance batch message publishing (100-1000+ messages per call)
 - 🔐 **Multiple Authentication**: Goth integration, gcloud CLI, service accounts, and GCE metadata
-- 🔄 **Auto-Recovery**: Automatic connection health checking and recovery
-- 🏊‍♂️ **NimblePool Management**: Efficient connection lifecycle with async initialization
+- 🔄 **Auto-Recovery**: Automatic connection health checking, retry logic with exponential backoff
+- 🌐 **Environment-Agnostic**: Seamlessly works with production Google Cloud and local emulator
+- 🔥 **Connection Warming**: Periodic pings to prevent idle connection timeouts
 - 🐳 **Docker Support**: Built-in Docker Compose setup for local development
 - 🧪 **Comprehensive Tests**: Full integration test suite with emulator
 - 🎯 **Clean API**: Simple client interface for common operations
@@ -30,11 +31,11 @@ This library uses **gRPC** instead of the traditional HTTP REST API for Google C
 - **Keep-Alive**: Maintains warm connections preventing cold start delays
 
 ### 🛡️ **Reliability & Resilience**
-- **Eager Connection Pooling**: All connections pre-established at startup (no lazy initialization delays)
-- **NimblePool Management**: Automatic connection lifecycle with async initialization
-- **Health Checking**: Automatic detection and recovery from dead connections
-- **Timeout Handling**: Built-in keepalive prevents Google's 1-minute idle timeout  
-- **Exponential Backoff**: Smart retry logic for connection failures
+- **Advanced Connection Pooling**: Powered by [GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool) library with Poolex foundation
+- **Health Monitoring**: Automatic detection and recovery from dead connections with periodic pings
+- **Connection Warming**: Configurable ping intervals to prevent idle connection timeouts
+- **Retry Logic**: Smart exponential backoff for connection failures and recovery
+- **Environment Flexibility**: Single codebase works across development, testing, and production
 
 ### 📊 **Practical Impact**
 ```elixir
@@ -53,6 +54,28 @@ This library uses **gRPC** instead of the traditional HTTP REST API for Google C
 
 **Benchmark expectations**: 2-3x better throughput and 40-60% lower latency compared to HTTP implementations, especially under high load scenarios.
 
+## New Architecture (v0.2.0+)
+
+Starting with v0.2.0, PubsubGrpc has been refactored to use the **[GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool)** library for connection management. This provides several improvements:
+
+### 🔄 **What Changed**
+- **Library Separation**: Connection pooling logic extracted into reusable `GrpcConnectionPool` library
+- **Poolex Foundation**: Upgraded from NimblePool to modern Poolex for better performance and monitoring
+- **Environment Agnostic**: Unified configuration that works across development, testing, and production
+- **Enhanced Features**: Connection warming, improved health monitoring, and better retry logic
+
+### 🎯 **Benefits**
+- **Cleaner Codebase**: Separation of concerns between Pub/Sub logic and connection management
+- **Reusable Components**: The connection pool can be used by other gRPC clients
+- **Better Testing**: Independent testing of connection pooling and Pub/Sub operations
+- **Future Flexibility**: Easy to upgrade connection pooling features independently
+
+### ⚙️ **Migration**
+The public API remains the same - no code changes needed in your application! The only changes are:
+- **Configuration**: Enhanced options available (but legacy config still works)
+- **Dependencies**: Now includes `grpc_connection_pool` library
+- **Internal**: Better error handling and connection management
+
 ## Installation
 
 Add `pubsub_grpc` to your list of dependencies in `mix.exs`:
@@ -60,7 +83,9 @@ Add `pubsub_grpc` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:pubsub_grpc, "~> 0.2.0"}
+    {:pubsub_grpc, "~> 0.2.0"},
+    # grpc_connection_pool is automatically included as a dependency
+    # {:grpc_connection_pool, github: "nyo16/grpc_connection_pool"}  # If using GitHub directly
   ]
 end
 ```
@@ -219,10 +244,28 @@ import Config
 
 #### Development/Test (Local Emulator)
 
+**New Configuration Format (Recommended):**
 ```elixir
 # config/dev.exs and config/test.exs
 import Config
 
+config :pubsub_grpc, GrpcConnectionPool,
+  endpoint: [
+    type: :local,
+    host: "localhost",
+    port: 8085
+  ],
+  pool: [
+    size: 3,  # Smaller pool for development
+    name: PubsubGrpc.ConnectionPool
+  ],
+  connection: [
+    ping_interval: nil  # Disable pinging for emulator
+  ]
+```
+
+**Legacy Configuration (Still Supported):**
+```elixir
 config :pubsub_grpc, :emulator,
   project_id: "my-project-id",
   host: "localhost",
@@ -622,11 +665,20 @@ children = [
 
 ## Architecture
 
-- **NimblePool**: Manages a pool of GRPC connections efficiently
-- **Lazy Connections**: Connections are created only when needed
-- **Health Checking**: Automatically detects and replaces dead connections
-- **Error Recovery**: Graceful handling of network failures and reconnection
-- **Docker Integration**: Seamless development with local emulator
+### Modern Connection Pooling (v0.2.0+)
+- **[GrpcConnectionPool](https://github.com/nyo16/grpc_connection_pool)**: Dedicated library for robust gRPC connection management
+- **Poolex Foundation**: Modern Elixir worker pool implementation with better monitoring
+- **GenServer Workers**: Each connection managed by a dedicated GenServer for reliability
+- **Health Monitoring**: Periodic health checks with automatic connection replacement
+- **Connection Warming**: Configurable pings to prevent idle timeouts
+- **Retry Logic**: Exponential backoff for connection failures
+- **Environment Agnostic**: Unified configuration for development, testing, and production
+
+### Integration Benefits
+- **Separation of Concerns**: Pub/Sub logic separate from connection management
+- **Reusable Components**: Connection pooling can be used by other gRPC clients
+- **Independent Updates**: Connection pool improvements don't affect Pub/Sub API
+- **Better Testing**: Isolated testing of connection pooling and Pub/Sub operations
 
 ## Quick Start Examples
 

@@ -70,11 +70,20 @@ defmodule PubsubGrpc.Auth do
 
   """
   def request_opts do
-    case get_token() do
-      {:ok, token} ->
-        [metadata: %{"authorization" => token}]
+    # Skip authentication for emulator environments
+    case Application.get_env(:pubsub_grpc, :emulator) do
+      nil ->
+        # Production - use authentication
+        case get_token() do
+          {:ok, token} ->
+            [metadata: %{"authorization" => token}]
 
-      {:error, _reason} ->
+          {:error, _reason} ->
+            []
+        end
+
+      _emulator_config ->
+        # Emulator - no authentication needed
         []
     end
   end

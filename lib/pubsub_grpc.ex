@@ -89,7 +89,11 @@ defmodule PubsubGrpc do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
     end
 
-    Client.execute(operation)
+    case Client.execute(operation) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -114,8 +118,9 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, %Google.Protobuf.Empty{}} -> :ok
-      error -> error
+      {:ok, {:ok, %Google.Protobuf.Empty{}}} -> :ok
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -148,11 +153,11 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, response} ->
+      {:ok, {:ok, response}} ->
         {:ok, %{topics: response.topics, next_page_token: response.next_page_token}}
 
-      error ->
-        error
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -202,8 +207,9 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, response} -> {:ok, %{message_ids: response.message_ids}}
-      error -> error
+      {:ok, {:ok, response}} -> {:ok, %{message_ids: response.message_ids}}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -266,7 +272,11 @@ defmodule PubsubGrpc do
       Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, auth_opts)
     end
 
-    Client.execute(operation)
+    case Client.execute(operation) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -291,8 +301,9 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, %Google.Protobuf.Empty{}} -> :ok
-      error -> error
+      {:ok, {:ok, %Google.Protobuf.Empty{}}} -> :ok
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -334,8 +345,9 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, response} -> {:ok, response.received_messages}
-      error -> error
+      {:ok, {:ok, response}} -> {:ok, response.received_messages}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -372,8 +384,9 @@ defmodule PubsubGrpc do
     end
 
     case Client.execute(operation) do
-      {:ok, %Google.Protobuf.Empty{}} -> :ok
-      error -> error
+      {:ok, {:ok, %Google.Protobuf.Empty{}}} -> :ok
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -406,7 +419,11 @@ defmodule PubsubGrpc do
 
   """
   def execute(operation_fn, opts \\ []) do
-    Client.execute(operation_fn, opts)
+    case Client.execute(operation_fn, opts) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -442,7 +459,11 @@ defmodule PubsubGrpc do
 
   """
   def with_connection(fun) when is_function(fun, 1) do
-    Client.execute(fun)
+    case Client.execute(fun) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, error}} -> {:error, error}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # Private helper functions
