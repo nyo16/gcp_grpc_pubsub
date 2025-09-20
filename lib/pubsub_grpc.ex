@@ -160,8 +160,11 @@ defmodule PubsubGrpc do
       {:ok, {:ok, response}} ->
         {:ok, %{topics: response.topics, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -617,5 +620,4 @@ defmodule PubsubGrpc do
   defp subscription_path(project_id, subscription_id) do
     "projects/#{project_id}/subscriptions/#{subscription_id}"
   end
-
 end

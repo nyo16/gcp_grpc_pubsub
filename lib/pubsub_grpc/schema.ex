@@ -95,8 +95,11 @@ defmodule PubsubGrpc.Schema do
       {:ok, {:ok, response}} ->
         {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -124,7 +127,8 @@ defmodule PubsubGrpc.Schema do
       {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema", view: :basic)
 
   """
-  @spec get_schema(String.t(), String.t(), keyword()) :: {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+  @spec get_schema(String.t(), String.t(), keyword()) ::
+          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
   def get_schema(project_id, schema_id, opts \\ []) do
     schema_path = schema_path(project_id, schema_id)
     view = schema_view_atom_to_enum(opts[:view] || :full)
@@ -200,7 +204,8 @@ defmodule PubsubGrpc.Schema do
       )
 
   """
-  @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) :: {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+  @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) ::
+          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
   def create_schema(project_id, schema_id, type, definition) do
     project_path = "projects/#{project_id}"
     schema_type = schema_type_atom_to_enum(type)
@@ -303,8 +308,11 @@ defmodule PubsubGrpc.Schema do
       {:ok, {:ok, response}} ->
         {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -334,7 +342,8 @@ defmodule PubsubGrpc.Schema do
       )
 
   """
-  @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) :: {:ok, any()} | {:error, any()}
+  @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) ::
+          {:ok, any()} | {:error, any()}
   def validate_schema(project_id, type, definition) do
     project_path = "projects/#{project_id}"
     schema_type = schema_type_atom_to_enum(type)

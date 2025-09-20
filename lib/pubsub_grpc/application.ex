@@ -140,7 +140,8 @@ defmodule PubsubGrpc.Application do
               port: emulator_opts[:port] || 8085
             ],
             pool: [size: pool_size, name: PubsubGrpc.ConnectionPool],
-            connection: [ping_interval: nil, health_check: true]  # Disable pinging for emulator
+            # Disable pinging for emulator
+            connection: [ping_interval: nil, health_check: true]
           ]
 
         _ ->
@@ -159,14 +160,17 @@ defmodule PubsubGrpc.Application do
     case GrpcConnectionPool.Config.new(config_opts) do
       {:ok, config} ->
         config
+
       {:error, _reason} ->
         # Fallback to basic production config
-        {:ok, config} = GrpcConnectionPool.Config.production(
-          host: "pubsub.googleapis.com",
-          port: 443,
-          pool_name: PubsubGrpc.ConnectionPool,
-          pool_size: pool_size
-        )
+        {:ok, config} =
+          GrpcConnectionPool.Config.production(
+            host: "pubsub.googleapis.com",
+            port: 443,
+            pool_name: PubsubGrpc.ConnectionPool,
+            pool_size: pool_size
+          )
+
         config
     end
   end
