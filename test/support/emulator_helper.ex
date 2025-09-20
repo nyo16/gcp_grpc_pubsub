@@ -105,7 +105,8 @@ defmodule PubsubGrpc.EmulatorHelper do
     end
 
     case PubsubGrpc.Client.execute(delete_topic_operation) do
-      {:ok, _} -> :ok
+      {:ok, {:ok, _}} -> :ok
+      {:ok, {:error, _}} -> :ok
       # Ignore errors during cleanup
       {:error, _} -> :ok
       # Handle bare :ok returns
@@ -132,7 +133,8 @@ defmodule PubsubGrpc.EmulatorHelper do
     end
 
     case PubsubGrpc.Client.execute(delete_subscription_operation) do
-      {:ok, _} -> :ok
+      {:ok, {:ok, _}} -> :ok
+      {:ok, {:error, _}} -> :ok
       # Ignore errors during cleanup
       {:error, _} -> :ok
       # Handle bare :ok returns

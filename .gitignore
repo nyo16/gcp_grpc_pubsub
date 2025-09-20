@@ -42,3 +42,14 @@ excoveralls.json
 # Documentation
 /doc/
 doc/
+
+
+staging_folder
+
+.elixir_ls
+
+/.elixir_ls/
+
+/tmp/
+
+tmp

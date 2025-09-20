@@ -183,7 +183,8 @@ defmodule PubsubGrpcMainApiTest do
         # Create topic using direct GRPC call
         topic_path = "projects/test-project-id/topics/#{topic_name}"
         request = %Google.Pubsub.V1.Topic{name: topic_path}
-        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
+        auth_opts = PubsubGrpc.Auth.request_opts()
+        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
       end)
 
     assert {:ok, topic} = result
