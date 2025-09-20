@@ -17,6 +17,15 @@ jobs:
       matrix:
         otp: ['28.1']
         elixir: ['1.18.4']
+
+    services:
+      pubsub-emulator:
+        image: google/cloud-sdk:489.0.0-stable
+        ports:
+          - 8085:8085
+        options: >-
+          --entrypoint=/bin/bash
+          --command="gcloud components install pubsub-emulator && gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=test-project-id"
     
     steps:
     - name: Set up Git repository
