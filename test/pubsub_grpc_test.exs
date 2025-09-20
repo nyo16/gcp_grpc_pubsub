@@ -21,10 +21,6 @@ defmodule PubsubGrpcTest do
     %{topic_name: topic_name, subscription_name: subscription_name}
   end
 
-  test "basic hello function" do
-    assert PubsubGrpc.hello() == :world
-  end
-
   test "create topic", %{topic_name: topic_name} do
     topic_path = EmulatorHelper.topic_path(topic_name)
 

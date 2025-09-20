@@ -6,8 +6,3 @@ services:
       - "8085:8085"
     environment:
       - PUBSUB_PROJECT_ID=my-project-id
-    volumes:
-      - pubsub-emulator-data:/root/.config/gcloud/emulators/pubsub
-
-volumes:
-  pubsub-emulator-data:
