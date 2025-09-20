@@ -20,7 +20,7 @@ defmodule PubsubGrpcConnectionTest do
       # This should work even without a real GRPC connection if the pool is working
       result =
         case Client.execute(simple_operation) do
-          {:ok, "test_result"} -> :ok
+          {:ok, {:ok, "test_result"}} -> :ok
           {:error, _} -> :expected_error
           other -> other
         end
@@ -52,7 +52,7 @@ defmodule PubsubGrpcConnectionTest do
       # Check that we got results (could be success or connection errors)
       Enum.each(results, fn result ->
         case result do
-          {:ok, id} when is_integer(id) -> :ok
+          {:ok, {:ok, id}} when is_integer(id) -> :ok
           {:error, _} -> :expected_connection_error
           # Some operations might return bare :ok
           :ok -> :ok
@@ -72,6 +72,7 @@ defmodule PubsubGrpcConnectionTest do
 
       # NimblePool might return different error formats
       case result do
+        {:ok, {:error, _}} -> :ok
         {:error, _} -> :ok
         :error -> :ok
         other -> flunk("Expected error, got: #{inspect(other)}")
@@ -87,7 +88,7 @@ defmodule PubsubGrpcConnectionTest do
 
       result2 =
         case Client.execute(simple_operation) do
-          {:ok, "after_error"} -> :ok
+          {:ok, {:ok, "after_error"}} -> :ok
           {:error, _} -> :expected_connection_error
           other -> other
         end
@@ -103,7 +104,7 @@ defmodule PubsubGrpcConnectionTest do
 
       # Should either work or return a connection error
       case result do
-        {:ok, "with_connection_works"} -> :ok
+        {:ok, {:ok, "with_connection_works"}} -> :ok
         # Could be connection error if no emulator
         {:error, _} -> :expected_connection_error
         # Some operations might return bare :ok
