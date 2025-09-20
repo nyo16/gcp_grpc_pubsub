@@ -63,7 +63,8 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request)
     end
 
-    assert {:ok, {:ok, %Google.Pubsub.V1.Subscription{name: ^subscription_path, topic: ^topic_path}}} =
+    assert {:ok,
+            {:ok, %Google.Pubsub.V1.Subscription{name: ^subscription_path, topic: ^topic_path}}} =
              Client.execute(create_subscription_operation)
   end
 
