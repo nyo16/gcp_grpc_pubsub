@@ -22,7 +22,7 @@ defmodule PubsubGrpc.Client do
         auth_opts = PubsubGrpc.Auth.request_opts()
         Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end
-      
+
       {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation)
 
       # Execute on a custom pool
@@ -73,14 +73,14 @@ defmodule PubsubGrpc.Client do
   def execute(operation_fn, params) when is_function(operation_fn, 2) do
     # Wrap the 2-arity function to be 1-arity
     wrapped_fn = fn channel -> operation_fn.(channel, params) end
-    
+
     pool_name = if is_list(params), do: @default_pool, else: @default_pool
     GrpcConnectionPool.execute(wrapped_fn, pool: pool_name)
   end
 
   @doc """
   Execute a function within a connection from the default pool.
-  
+
   This is for backward compatibility with the old API.
   """
   @spec with_connection(function()) :: any()

@@ -50,9 +50,6 @@ defmodule PubsubGrpc.MixProject do
   defp deps do
     [
       {:grpc_connection_pool, "~> 0.1.3"},
-      {:grpc, "~> 0.10.2"},
-      #{:googleapis_proto_ex, "~> 0.3.1"},
-      {:googleapis_proto_ex, github: "nyo16/googleapis_proto_ex", branch: "master", override: true},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:goth, "~> 1.4", optional: true}

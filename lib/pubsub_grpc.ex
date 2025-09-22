@@ -18,7 +18,7 @@ defmodule PubsubGrpc do
         {Goth, name: MyApp.Goth, source: {:service_account, credentials}},
         # ... other children
       ]
-      
+
       # Configure PubsubGrpc to use Goth
       config :pubsub_grpc, :goth, MyApp.Goth
 
@@ -160,8 +160,11 @@ defmodule PubsubGrpc do
       {:ok, {:ok, response}} ->
         {:ok, %{topics: response.topics, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -447,7 +450,7 @@ defmodule PubsubGrpc do
 
       result = PubsubGrpc.with_connection(fn channel ->
         auth_opts = PubsubGrpc.Auth.request_opts()
-        
+
         # Create topic
         topic_req = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/batch-topic"}
         {:ok, _topic} = Google.Pubsub.V1.Publisher.Stub.create_topic(channel, topic_req, auth_opts)
@@ -536,7 +539,7 @@ defmodule PubsubGrpc do
       syntax = "proto3";
       message User { string name = 1; }
       '''
-      
+
       {:ok, schema} = PubsubGrpc.create_schema("my-project", "user-schema", :protocol_buffer, definition)
 
   """
@@ -578,7 +581,7 @@ defmodule PubsubGrpc do
       syntax = "proto3";
       message User { string name = 1; }
       '''
-      
+
       {:ok, result} = PubsubGrpc.validate_schema("my-project", :protocol_buffer, definition)
 
   """
@@ -616,18 +619,5 @@ defmodule PubsubGrpc do
 
   defp subscription_path(project_id, subscription_id) do
     "projects/#{project_id}/subscriptions/#{subscription_id}"
-  end
-
-  @doc """
-  Hello world function for basic testing.
-
-  ## Examples
-
-      iex> PubsubGrpc.hello()
-      :world
-
-  """
-  def hello do
-    :world
   end
 end

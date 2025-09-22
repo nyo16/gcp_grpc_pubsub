@@ -21,10 +21,6 @@ defmodule PubsubGrpcTest do
     %{topic_name: topic_name, subscription_name: subscription_name}
   end
 
-  test "basic hello function" do
-    assert PubsubGrpc.hello() == :world
-  end
-
   test "create topic", %{topic_name: topic_name} do
     topic_path = EmulatorHelper.topic_path(topic_name)
 
@@ -36,7 +32,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
-    assert {:ok, %Google.Pubsub.V1.Topic{name: ^topic_path}} =
+    assert {:ok, {:ok, %Google.Pubsub.V1.Topic{name: ^topic_path}}} =
              Client.execute(create_topic_operation)
   end
 
@@ -50,7 +46,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
-    assert {:ok, _} = Client.execute(create_topic_operation)
+    assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Then create subscription
     create_subscription_operation = fn channel, _params ->
@@ -63,7 +59,8 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request)
     end
 
-    assert {:ok, %Google.Pubsub.V1.Subscription{name: ^subscription_path, topic: ^topic_path}} =
+    assert {:ok,
+            {:ok, %Google.Pubsub.V1.Subscription{name: ^subscription_path, topic: ^topic_path}}} =
              Client.execute(create_subscription_operation)
   end
 
@@ -76,7 +73,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
-    assert {:ok, _} = Client.execute(create_topic_operation)
+    assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Publish message
     message_data = "Hello, Pub/Sub!"
@@ -95,7 +92,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
     end
 
-    assert {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: [message_id]}} =
+    assert {:ok, {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: [message_id]}}} =
              Client.execute(publish_operation)
 
     assert is_binary(message_id)
@@ -116,7 +113,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
-    assert {:ok, _} = Client.execute(create_topic_operation)
+    assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Step 2: Create subscription
     create_subscription_operation = fn channel, _params ->
@@ -146,7 +143,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
     end
 
-    assert {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: [_message_id]}} =
+    assert {:ok, {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: [_message_id]}}} =
              Client.execute(publish_operation)
 
     # Step 4: Pull message
@@ -163,11 +160,11 @@ defmodule PubsubGrpcTest do
     received_message =
       Enum.find_value(1..5, fn _attempt ->
         case Client.execute(pull_operation) do
-          {:ok, %Google.Pubsub.V1.PullResponse{received_messages: []}} ->
+          {:ok, {:ok, %Google.Pubsub.V1.PullResponse{received_messages: []}}} ->
             :timer.sleep(500)
             nil
 
-          {:ok, %Google.Pubsub.V1.PullResponse{received_messages: [message | _]}} ->
+          {:ok, {:ok, %Google.Pubsub.V1.PullResponse{received_messages: [message | _]}}} ->
             message
 
           error ->
@@ -199,7 +196,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request)
     end
 
-    assert {:ok, %Google.Protobuf.Empty{}} = Client.execute(acknowledge_operation)
+    assert {:ok, {:ok, %Google.Protobuf.Empty{}}} = Client.execute(acknowledge_operation)
   end
 
   test "multiple messages publish and pull", %{
@@ -215,7 +212,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
-    assert {:ok, _} = Client.execute(create_topic_operation)
+    assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     create_subscription_operation = fn channel, _params ->
       request = %Google.Pubsub.V1.Subscription{
@@ -249,7 +246,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Publisher.Stub.publish(channel, request)
     end
 
-    assert {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: message_ids}} =
+    assert {:ok, {:ok, %Google.Pubsub.V1.PublishResponse{message_ids: message_ids}}} =
              Client.execute(publish_operation)
 
     assert length(message_ids) == message_count
@@ -268,11 +265,11 @@ defmodule PubsubGrpcTest do
     received_messages =
       Enum.reduce_while(1..10, [], fn _attempt, acc ->
         case Client.execute(pull_operation) do
-          {:ok, %Google.Pubsub.V1.PullResponse{received_messages: []}} when acc == [] ->
+          {:ok, {:ok, %Google.Pubsub.V1.PullResponse{received_messages: []}}} when acc == [] ->
             :timer.sleep(500)
             {:cont, acc}
 
-          {:ok, %Google.Pubsub.V1.PullResponse{received_messages: new_messages}} ->
+          {:ok, {:ok, %Google.Pubsub.V1.PullResponse{received_messages: new_messages}}} ->
             all_messages = acc ++ new_messages
 
             if length(all_messages) >= message_count do
@@ -314,7 +311,7 @@ defmodule PubsubGrpcTest do
       Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request)
     end
 
-    assert {:ok, %Google.Protobuf.Empty{}} = Client.execute(acknowledge_operation)
+    assert {:ok, {:ok, %Google.Protobuf.Empty{}}} = Client.execute(acknowledge_operation)
   end
 
   test "error handling: create topic that already exists", %{topic_name: topic_name} do
@@ -326,10 +323,10 @@ defmodule PubsubGrpcTest do
     end
 
     # First creation should succeed
-    assert {:ok, _} = Client.execute(create_topic_operation)
+    assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Second creation should fail
-    assert {:error, %GRPC.RPCError{status: 6, message: message}} =
+    assert {:ok, {:error, %GRPC.RPCError{status: 6, message: message}}} =
              Client.execute(create_topic_operation)
 
     assert message =~ "already exists" or message =~ "ALREADY_EXISTS"

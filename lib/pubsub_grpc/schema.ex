@@ -19,24 +19,24 @@ defmodule PubsubGrpc.Schema do
 
       # List schemas
       {:ok, schemas_info} = PubsubGrpc.Schema.list_schemas("my-project")
-      
+
       # Get specific schema
       {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema")
-      
+
       # Create Protocol Buffer schema
       definition = '''
       syntax = "proto3";
-      
+
       message Person {
         string name = 1;
         int32 age = 2;
       }
       '''
-      
+
       {:ok, schema} = PubsubGrpc.Schema.create_schema(
-        "my-project", 
-        "person-schema", 
-        :protocol_buffer, 
+        "my-project",
+        "person-schema",
+        :protocol_buffer,
         definition
       )
 
@@ -66,10 +66,10 @@ defmodule PubsubGrpc.Schema do
 
       # List with full details
       {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project", view: :full)
-      
+
       # List with pagination
-      {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project", 
-        page_size: 10, 
+      {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project",
+        page_size: 10,
         page_token: "next_page_token"
       )
 
@@ -95,8 +95,11 @@ defmodule PubsubGrpc.Schema do
       {:ok, {:ok, response}} ->
         {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -124,7 +127,8 @@ defmodule PubsubGrpc.Schema do
       {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema", view: :basic)
 
   """
-  @spec get_schema(String.t(), String.t(), keyword()) :: {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+  @spec get_schema(String.t(), String.t(), keyword()) ::
+          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
   def get_schema(project_id, schema_id, opts \\ []) do
     schema_path = schema_path(project_id, schema_id)
     view = schema_view_atom_to_enum(opts[:view] || :full)
@@ -164,17 +168,17 @@ defmodule PubsubGrpc.Schema do
       # Create Protocol Buffer schema
       protobuf_definition = '''
       syntax = "proto3";
-      
+
       message UserEvent {
         string user_id = 1;
         string event_type = 2;
         int64 timestamp = 3;
       }
       '''
-      
+
       {:ok, schema} = PubsubGrpc.Schema.create_schema(
         "my-project",
-        "user-event-schema", 
+        "user-event-schema",
         :protocol_buffer,
         protobuf_definition
       )
@@ -191,16 +195,17 @@ defmodule PubsubGrpc.Schema do
         ]
       }
       '''
-      
+
       {:ok, schema} = PubsubGrpc.Schema.create_schema(
         "my-project",
         "user-event-avro-schema",
-        :avro, 
+        :avro,
         avro_definition
       )
 
   """
-  @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) :: {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+  @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) ::
+          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
   def create_schema(project_id, schema_id, type, definition) do
     project_path = "projects/#{project_id}"
     schema_type = schema_type_atom_to_enum(type)
@@ -303,8 +308,11 @@ defmodule PubsubGrpc.Schema do
       {:ok, {:ok, response}} ->
         {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
 
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+      {:ok, {:error, error}} ->
+        {:error, error}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -326,15 +334,16 @@ defmodule PubsubGrpc.Schema do
       syntax = "proto3";
       message User { string name = 1; }
       '''
-      
+
       {:ok, result} = PubsubGrpc.Schema.validate_schema(
-        "my-project", 
-        :protocol_buffer, 
+        "my-project",
+        :protocol_buffer,
         protobuf_def
       )
 
   """
-  @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) :: {:ok, any()} | {:error, any()}
+  @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) ::
+          {:ok, any()} | {:error, any()}
   def validate_schema(project_id, type, definition) do
     project_path = "projects/#{project_id}"
     schema_type = schema_type_atom_to_enum(type)
