@@ -7,17 +7,7 @@ ExUnit.start()
 # Start the application
 {:ok, _} = Application.ensure_all_started(:pubsub_grpc)
 
-# Start emulator for integration tests
-case PubsubGrpc.EmulatorHelper.start_emulator() do
-  :ok ->
-    IO.puts("Pub/Sub emulator started successfully")
-
-    # Register cleanup on exit
-    ExUnit.after_suite(fn _results ->
-      PubsubGrpc.EmulatorHelper.stop_emulator()
-    end)
-
-  {:error, reason} ->
-    IO.puts("Warning: Could not start emulator: #{inspect(reason)}")
-    IO.puts("Integration tests will be skipped")
-end
+# Skip emulator startup for tests
+IO.puts("Emulator startup skipped - running tests without emulator")
+IO.puts("To run with emulator, start it manually with:")
+IO.puts("docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c \"gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'\"")
