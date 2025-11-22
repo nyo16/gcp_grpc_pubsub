@@ -115,6 +115,51 @@ defmodule PubsubGrpcConnectionTest do
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
+
+    test "connection pool handles graceful disconnect without FunctionClauseError" do
+      # This test verifies our fix for the GRPC v0.11.5 disconnect issue
+      # where FunctionClauseError was thrown during pool shutdown
+
+      # Get the current pool status
+      initial_status = GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
+
+      # Stop the pool - this should not raise FunctionClauseError
+      result = try do
+        GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
+        :ok
+      rescue
+        error -> {:error, error}
+      catch
+        :exit, reason -> {:exit, reason}
+      end
+
+      assert result == :ok, "Pool shutdown should complete without errors, got: #{inspect(result)}"
+
+      # Restart the pool for subsequent tests
+      # The application supervisor will restart it automatically
+      wait_for_pool_restart(10)
+    end
+
+    test "worker cleanup handles different channel types safely" do
+      # This test specifically targets our worker cleanup fix
+      # We can't directly test the cleanup_connection function, but we can
+      # test that the pool can handle multiple start/stop cycles without crashes
+
+      for _i <- 1..3 do
+        # Stop the pool
+        result = GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
+        assert result == :ok
+
+        # Wait a bit
+        :timer.sleep(50)
+
+        # Wait for restart
+        wait_for_pool_restart(10)
+      end
+
+      # Final verification that the pool is still functional
+      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
+    end
   end
 
   describe "connection configuration" do
@@ -151,6 +196,18 @@ defmodule PubsubGrpcConnectionTest do
       # Supervisor not yet registered
       :timer.sleep(100)
       wait_for_pool(retries - 1)
+    end
+  end
+
+  # Helper function to wait for pool restart after shutdown
+  defp wait_for_pool_restart(retries) when retries <= 0, do: :ok
+  defp wait_for_pool_restart(retries) do
+    # Wait for the supervisor to be restarted by the application supervisor
+    if Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) do
+      :ok
+    else
+      :timer.sleep(200)
+      wait_for_pool_restart(retries - 1)
     end
   end
 end
