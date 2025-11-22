@@ -9,13 +9,6 @@ defmodule PubsubGrpc.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test,
-        "coveralls.cobertura": :test
-      ],
 
       # Docs
       name: "PubsubGrpc",
@@ -25,6 +18,18 @@ defmodule PubsubGrpc.MixProject do
         extras: ["README.md"]
       ],
       package: package()
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.cobertura": :test
+      ]
     ]
   end
 
@@ -49,7 +54,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:grpc_connection_pool, "~> 0.1.5"},
+      {:grpc_connection_pool, "~> 0.2.0"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:goth, "~> 1.4", optional: true}
