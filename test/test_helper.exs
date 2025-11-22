@@ -4,10 +4,7 @@ Code.require_file("support/emulator_helper.ex", __DIR__)
 # Configure ExUnit
 ExUnit.start()
 
-# Start the application
-{:ok, _} = Application.ensure_all_started(:pubsub_grpc)
-
-# Start emulator for integration tests
+# Start emulator for integration tests BEFORE starting the application
 case PubsubGrpc.EmulatorHelper.start_emulator() do
   :ok ->
     IO.puts("Pub/Sub emulator started successfully")
@@ -21,3 +18,10 @@ case PubsubGrpc.EmulatorHelper.start_emulator() do
     IO.puts("Warning: Could not start emulator: #{inspect(reason)}")
     IO.puts("Integration tests will be skipped")
 end
+
+# Start the application AFTER emulator is ready
+{:ok, _} = Application.ensure_all_started(:pubsub_grpc)
+
+# Wait for gRPC connection pool to establish connections
+# The pool connects asynchronously, so we need to wait for healthy connections
+:timer.sleep(3000)

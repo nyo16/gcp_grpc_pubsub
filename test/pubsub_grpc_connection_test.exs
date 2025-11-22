@@ -6,9 +6,16 @@ defmodule PubsubGrpcConnectionTest do
   @moduletag :connection_pool
 
   describe "connection pool" do
+    setup do
+      # Wait for pool to be ready (connections are established asynchronously)
+      wait_for_pool(30)
+      :ok
+    end
+
     test "application starts with connection pool" do
-      # Check that the connection pool is registered
-      assert Process.whereis(PubsubGrpc.ConnectionPool) != nil
+      # Check that the connection pool supervisor is registered
+      # New architecture uses PubsubGrpc.ConnectionPool.Supervisor as the process name
+      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
     end
 
     test "can execute simple operation through pool" do
@@ -67,19 +74,15 @@ defmodule PubsubGrpcConnectionTest do
         raise "Simulated error"
       end
 
-      # This should return an error but not crash the pool
-      result = Client.execute(error_operation)
-
-      # NimblePool might return different error formats
-      case result do
-        {:ok, {:error, _}} -> :ok
-        {:error, _} -> :ok
-        :error -> :ok
-        other -> flunk("Expected error, got: #{inspect(other)}")
+      # This should raise an error but not crash the pool
+      # The new architecture lets errors propagate
+      assert_raise RuntimeError, "Simulated error", fn ->
+        Client.execute(error_operation)
       end
 
       # Pool should still be alive
-      assert Process.whereis(PubsubGrpc.ConnectionPool) != nil
+      # New architecture uses PubsubGrpc.ConnectionPool.Supervisor as the process name
+      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
 
       # And should still be able to handle new operations
       simple_operation = fn _channel, _params ->
@@ -122,6 +125,32 @@ defmodule PubsubGrpcConnectionTest do
       assert config[:project_id] == "test-project-id"
       assert config[:host] == "localhost"
       assert config[:port] == 8085
+    end
+  end
+
+  # Helper function to wait for pool to be ready
+  defp wait_for_pool(retries) when retries <= 0 do
+    # If pool never becomes healthy, that's OK for some tests
+    # Just ensure the supervisor is registered
+    :ok
+  end
+
+  defp wait_for_pool(retries) do
+    # Check if supervisor is registered (faster than waiting for connections)
+    if Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) do
+      # Supervisor exists, wait for connections to establish
+      case GrpcConnectionPool.status(PubsubGrpc.ConnectionPool) do
+        %{status: :healthy} ->
+          :ok
+
+        _ ->
+          :timer.sleep(100)
+          wait_for_pool(retries - 1)
+      end
+    else
+      # Supervisor not yet registered
+      :timer.sleep(100)
+      wait_for_pool(retries - 1)
     end
   end
 end

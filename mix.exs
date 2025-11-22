@@ -4,7 +4,7 @@ defmodule PubsubGrpc.MixProject do
   def project do
     [
       app: :pubsub_grpc,
-      version: "0.2.5",
+      version: "0.3.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -49,7 +49,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:grpc_connection_pool, "~> 0.1.3"},
+      {:grpc_connection_pool, "~> 0.1.5"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:goth, "~> 1.4", optional: true}

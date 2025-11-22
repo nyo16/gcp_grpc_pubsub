@@ -66,7 +66,11 @@ defmodule PubsubGrpc.Client do
   # Handle 1-arity functions (new API)
   def execute(operation_fn, opts) when is_function(operation_fn, 1) do
     pool_name = opts[:pool] || @default_pool
-    GrpcConnectionPool.execute(operation_fn, pool: pool_name)
+
+    case GrpcConnectionPool.get_channel(pool_name) do
+      {:ok, channel} -> {:ok, operation_fn.(channel)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # Handle 2-arity functions (backward compatibility)
@@ -75,7 +79,11 @@ defmodule PubsubGrpc.Client do
     wrapped_fn = fn channel -> operation_fn.(channel, params) end
 
     pool_name = if is_list(params), do: @default_pool, else: @default_pool
-    GrpcConnectionPool.execute(wrapped_fn, pool: pool_name)
+
+    case GrpcConnectionPool.get_channel(pool_name) do
+      {:ok, channel} -> {:ok, wrapped_fn.(channel)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """

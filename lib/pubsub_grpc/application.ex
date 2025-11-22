@@ -85,18 +85,10 @@ defmodule PubsubGrpc.Application do
   def start(_type, _args) do
     config = build_connection_pool_config()
 
-    # Start GrpcConnectionPool.Pool directly since child_spec returns Poolex tuple format
-    pool_name = config.pool.name || PubsubGrpc.ConnectionPool
-
-    child_spec = %{
-      id: pool_name,
-      start: {GrpcConnectionPool.Pool, :start_link, [config, [name: pool_name]]},
-      type: :supervisor,
-      restart: :permanent,
-      shutdown: 5000
-    }
-
-    children = [child_spec]
+    children = [
+      {GRPC.Client.Supervisor, []},
+      {GrpcConnectionPool, config}
+    ]
 
     opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor]
     Supervisor.start_link(children, opts)
