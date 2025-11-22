@@ -54,7 +54,7 @@ defmodule PubsubGrpc.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:grpc_connection_pool, "0.2.0"},
+      {:grpc_connection_pool, "0.2.1"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:goth, "~> 1.4", optional: true}
