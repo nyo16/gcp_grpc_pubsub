@@ -183,7 +183,7 @@ defmodule PubsubGrpcMainApiTest do
         # Create topic using direct GRPC call
         topic_path = "projects/test-project-id/topics/#{topic_name}"
         request = %Google.Pubsub.V1.Topic{name: topic_path}
-        auth_opts = PubsubGrpc.Auth.request_opts()
+        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts()
         Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
       end)
 
@@ -193,7 +193,7 @@ defmodule PubsubGrpcMainApiTest do
 
   test "execute custom operation using main API" do
     # Test a custom operation - getting a topic that doesn't exist
-    operation = fn channel, _params ->
+    operation = fn channel ->
       request = %Google.Pubsub.V1.GetTopicRequest{
         topic: "projects/test-project-id/topics/non-existent-topic"
       }
@@ -201,6 +201,6 @@ defmodule PubsubGrpcMainApiTest do
       Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request)
     end
 
-    assert {:error, %GRPC.RPCError{status: 5}} = PubsubGrpc.execute(operation)
+    assert {:error, %PubsubGrpc.Error{code: :not_found}} = PubsubGrpc.execute(operation)
   end
 end

@@ -10,4 +10,7 @@ ExUnit.start()
 # Skip emulator startup for tests
 IO.puts("Emulator startup skipped - running tests without emulator")
 IO.puts("To run with emulator, start it manually with:")
-IO.puts("docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c \"gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'\"")
+
+IO.puts(
+  "docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c \"gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'\""
+)

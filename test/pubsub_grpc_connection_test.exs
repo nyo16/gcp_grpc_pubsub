@@ -20,7 +20,7 @@ defmodule PubsubGrpcConnectionTest do
 
     test "can execute simple operation through pool" do
       # Test a simple operation that doesn't require actual GRPC connection
-      simple_operation = fn _channel, _params ->
+      simple_operation = fn _channel ->
         {:ok, "test_result"}
       end
 
@@ -37,17 +37,15 @@ defmodule PubsubGrpcConnectionTest do
     end
 
     test "connection pool handles multiple concurrent operations" do
-      # Create multiple tasks that will use the pool concurrently
-      operation = fn _channel, params ->
-        # Simulate some work
-        :timer.sleep(10)
-        {:ok, params[:id]}
-      end
-
       tasks =
         Enum.map(1..10, fn i ->
           Task.async(fn ->
-            Client.execute(operation, %{id: i})
+            operation = fn _channel ->
+              :timer.sleep(10)
+              {:ok, i}
+            end
+
+            Client.execute(operation)
           end)
         end)
 
@@ -70,7 +68,7 @@ defmodule PubsubGrpcConnectionTest do
 
     test "connection pool survives and recovers from errors" do
       # Operation that will cause an error
-      error_operation = fn _channel, _params ->
+      error_operation = fn _channel ->
         raise "Simulated error"
       end
 
@@ -85,7 +83,7 @@ defmodule PubsubGrpcConnectionTest do
       assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
 
       # And should still be able to handle new operations
-      simple_operation = fn _channel, _params ->
+      simple_operation = fn _channel ->
         {:ok, "after_error"}
       end
 
@@ -120,20 +118,19 @@ defmodule PubsubGrpcConnectionTest do
       # This test verifies our fix for the GRPC v0.11.5 disconnect issue
       # where FunctionClauseError was thrown during pool shutdown
 
-      # Get the current pool status
-      initial_status = GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
-
       # Stop the pool - this should not raise FunctionClauseError
-      result = try do
-        GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
-        :ok
-      rescue
-        error -> {:error, error}
-      catch
-        :exit, reason -> {:exit, reason}
-      end
+      result =
+        try do
+          GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
+          :ok
+        rescue
+          error -> {:error, error}
+        catch
+          :exit, reason -> {:exit, reason}
+        end
 
-      assert result == :ok, "Pool shutdown should complete without errors, got: #{inspect(result)}"
+      assert result == :ok,
+             "Pool shutdown should complete without errors, got: #{inspect(result)}"
 
       # Restart the pool for subsequent tests
       # The application supervisor will restart it automatically
@@ -201,6 +198,7 @@ defmodule PubsubGrpcConnectionTest do
 
   # Helper function to wait for pool restart after shutdown
   defp wait_for_pool_restart(retries) when retries <= 0, do: :ok
+
   defp wait_for_pool_restart(retries) do
     # Wait for the supervisor to be restarted by the application supervisor
     if Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) do
