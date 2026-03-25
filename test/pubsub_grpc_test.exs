@@ -24,7 +24,7 @@ defmodule PubsubGrpcTest do
   test "create topic", %{topic_name: topic_name} do
     topic_path = EmulatorHelper.topic_path(topic_name)
 
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{
         name: topic_path
       }
@@ -41,7 +41,7 @@ defmodule PubsubGrpcTest do
     subscription_path = EmulatorHelper.subscription_path(subscription_name)
 
     # First create the topic
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
@@ -49,7 +49,7 @@ defmodule PubsubGrpcTest do
     assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Then create subscription
-    create_subscription_operation = fn channel, _params ->
+    create_subscription_operation = fn channel ->
       request = %Google.Pubsub.V1.Subscription{
         name: subscription_path,
         topic: topic_path,
@@ -68,7 +68,7 @@ defmodule PubsubGrpcTest do
     topic_path = EmulatorHelper.topic_path(topic_name)
 
     # Create topic first
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
@@ -78,7 +78,7 @@ defmodule PubsubGrpcTest do
     # Publish message
     message_data = "Hello, Pub/Sub!"
 
-    publish_operation = fn channel, _params ->
+    publish_operation = fn channel ->
       message = %Google.Pubsub.V1.PubsubMessage{
         data: message_data,
         attributes: %{"test" => "true"}
@@ -108,7 +108,7 @@ defmodule PubsubGrpcTest do
     message_data = "Integration test message"
 
     # Step 1: Create topic
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
@@ -116,7 +116,7 @@ defmodule PubsubGrpcTest do
     assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
     # Step 2: Create subscription
-    create_subscription_operation = fn channel, _params ->
+    create_subscription_operation = fn channel ->
       request = %Google.Pubsub.V1.Subscription{
         name: subscription_path,
         topic: topic_path,
@@ -129,7 +129,7 @@ defmodule PubsubGrpcTest do
     assert {:ok, _} = Client.execute(create_subscription_operation)
 
     # Step 3: Publish message
-    publish_operation = fn channel, _params ->
+    publish_operation = fn channel ->
       message = %Google.Pubsub.V1.PubsubMessage{
         data: message_data,
         attributes: %{"source" => "integration_test", "timestamp" => "#{System.system_time()}"}
@@ -147,7 +147,7 @@ defmodule PubsubGrpcTest do
              Client.execute(publish_operation)
 
     # Step 4: Pull message
-    pull_operation = fn channel, _params ->
+    pull_operation = fn channel ->
       request = %Google.Pubsub.V1.PullRequest{
         subscription: subscription_path,
         max_messages: 1
@@ -187,7 +187,7 @@ defmodule PubsubGrpcTest do
     assert is_binary(ack_id)
 
     # Step 5: Acknowledge message
-    acknowledge_operation = fn channel, _params ->
+    acknowledge_operation = fn channel ->
       request = %Google.Pubsub.V1.AcknowledgeRequest{
         subscription: subscription_path,
         ack_ids: [ack_id]
@@ -207,14 +207,14 @@ defmodule PubsubGrpcTest do
     subscription_path = EmulatorHelper.subscription_path(subscription_name)
 
     # Setup topic and subscription
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end
 
     assert {:ok, {:ok, _}} = Client.execute(create_topic_operation)
 
-    create_subscription_operation = fn channel, _params ->
+    create_subscription_operation = fn channel ->
       request = %Google.Pubsub.V1.Subscription{
         name: subscription_path,
         topic: topic_path,
@@ -237,7 +237,7 @@ defmodule PubsubGrpcTest do
         }
       end)
 
-    publish_operation = fn channel, _params ->
+    publish_operation = fn channel ->
       request = %Google.Pubsub.V1.PublishRequest{
         topic: topic_path,
         messages: messages
@@ -252,7 +252,7 @@ defmodule PubsubGrpcTest do
     assert length(message_ids) == message_count
 
     # Pull all messages
-    pull_operation = fn channel, _params ->
+    pull_operation = fn channel ->
       request = %Google.Pubsub.V1.PullRequest{
         subscription: subscription_path,
         max_messages: message_count
@@ -302,7 +302,7 @@ defmodule PubsubGrpcTest do
     # Acknowledge all messages
     ack_ids = Enum.map(received_messages, & &1.ack_id)
 
-    acknowledge_operation = fn channel, _params ->
+    acknowledge_operation = fn channel ->
       request = %Google.Pubsub.V1.AcknowledgeRequest{
         subscription: subscription_path,
         ack_ids: ack_ids
@@ -317,7 +317,7 @@ defmodule PubsubGrpcTest do
   test "error handling: create topic that already exists", %{topic_name: topic_name} do
     topic_path = EmulatorHelper.topic_path(topic_name)
 
-    create_topic_operation = fn channel, _params ->
+    create_topic_operation = fn channel ->
       request = %Google.Pubsub.V1.Topic{name: topic_path}
       Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request)
     end

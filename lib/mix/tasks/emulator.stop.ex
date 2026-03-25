@@ -19,6 +19,7 @@ defmodule Mix.Tasks.Emulator.Stop do
     case System.cmd("docker", ["stop", "pubsub-emulator"], stderr_to_stdout: true) do
       {_output, 0} ->
         Mix.Shell.IO.info("Emulator stopped successfully")
+
       {error, _} ->
         if String.contains?(error, "No such container") do
           Mix.Shell.IO.info("Emulator is not running")

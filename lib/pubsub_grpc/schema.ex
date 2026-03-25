@@ -2,392 +2,280 @@ defmodule PubsubGrpc.Schema do
   @moduledoc """
   Schema management for Google Cloud Pub/Sub.
 
-  This module provides functions for managing Pub/Sub schemas, which define the
-  structure and format of messages published to topics. Schemas support both
-  Protocol Buffer and Avro formats.
-
-  ## Schema Features
-
-  - Create and manage schema definitions
-  - List schemas in a project
-  - Get schema details with different view levels
-  - Manage schema revisions
-  - Validate messages against schemas
-  - Support for Protocol Buffer and Avro formats
-
-  ## Examples
-
-      # List schemas
-      {:ok, schemas_info} = PubsubGrpc.Schema.list_schemas("my-project")
-
-      # Get specific schema
-      {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema")
-
-      # Create Protocol Buffer schema
-      definition = '''
-      syntax = "proto3";
-
-      message Person {
-        string name = 1;
-        int32 age = 2;
-      }
-      '''
-
-      {:ok, schema} = PubsubGrpc.Schema.create_schema(
-        "my-project",
-        "person-schema",
-        :protocol_buffer,
-        definition
-      )
-
+  Provides functions for managing Pub/Sub schemas, which define the structure
+  and format of messages. Supports Protocol Buffer and Avro formats.
   """
 
-  alias PubsubGrpc.Client
+  alias Google.Pubsub.V1, as: PubsubV1
+  alias PubsubGrpc.{Client, Error, Validation}
+  alias PubsubV1.SchemaService.Stub, as: SchemaStub
 
-  @doc """
-  Lists schemas in a project.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `opts`: Optional parameters
-    - `:view` - Schema view level (`:basic` or `:full`, default: `:basic`)
-    - `:page_size` - Maximum number of schemas to return
-    - `:page_token` - Token for pagination
-
-  ## Returns
-  - `{:ok, %{schemas: schemas, next_page_token: token}}` - List of schemas
-  - `{:error, reason}` - Error listing schemas
-
-  ## Examples
-
-      # List all schemas (basic view)
-      {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project")
-      IO.inspect(result.schemas)
-
-      # List with full details
-      {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project", view: :full)
-
-      # List with pagination
-      {:ok, result} = PubsubGrpc.Schema.list_schemas("my-project",
-        page_size: 10,
-        page_token: "next_page_token"
-      )
-
-  """
-  @spec list_schemas(String.t(), keyword()) :: {:ok, map()} | {:error, any()}
+  @spec list_schemas(String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   def list_schemas(project_id, opts \\ []) do
-    project_path = "projects/#{project_id}"
-    view = schema_view_atom_to_enum(opts[:view] || :basic)
+    view = opts[:view] || :basic
 
-    operation = fn channel ->
-      request = %Google.Pubsub.V1.ListSchemasRequest{
-        parent: project_path,
-        view: view,
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, view_enum} <- Validation.validate_schema_view(view),
+         {:ok, grpc_opts} <- grpc_opts() do
+      project_path = "projects/#{project_id}"
 
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.list_schemas(channel, request, auth_opts)
-    end
+      fn channel ->
+        request = %PubsubV1.ListSchemasRequest{
+          parent: project_path,
+          view: view_enum,
+          page_size: Keyword.get(opts, :page_size, 0),
+          page_token: Keyword.get(opts, :page_token, "")
+        }
 
-    case Client.execute(operation) do
-      {:ok, {:ok, response}} ->
-        {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
-
-      {:ok, {:error, error}} ->
-        {:error, error}
-
-      {:error, reason} ->
-        {:error, reason}
+        SchemaStub.list_schemas(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_list_result(:schemas, :next_page_token)
     end
   end
 
-  @doc """
-  Gets details of a specific schema.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `schema_id`: The schema identifier
-  - `opts`: Optional parameters
-    - `:view` - Schema view level (`:basic` or `:full`, default: `:full`)
-
-  ## Returns
-  - `{:ok, schema}` - Schema details
-  - `{:error, reason}` - Error getting schema
-
-  ## Examples
-
-      # Get schema with full details
-      {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema")
-      IO.puts("Schema type: \#{schema.type}")
-      IO.puts("Definition: \#{schema.definition}")
-
-      # Get schema with basic details only
-      {:ok, schema} = PubsubGrpc.Schema.get_schema("my-project", "my-schema", view: :basic)
-
-  """
   @spec get_schema(String.t(), String.t(), keyword()) ::
-          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+          {:ok, PubsubV1.Schema.t()} | {:error, Error.t()}
   def get_schema(project_id, schema_id, opts \\ []) do
-    schema_path = schema_path(project_id, schema_id)
-    view = schema_view_atom_to_enum(opts[:view] || :full)
+    view = opts[:view] || :full
 
-    operation = fn channel ->
-      request = %Google.Pubsub.V1.GetSchemaRequest{
-        name: schema_path,
-        view: view
-      }
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_schema_id(schema_id),
+         {:ok, view_enum} <- Validation.validate_schema_view(view),
+         {:ok, grpc_opts} <- grpc_opts() do
+      schema_path = schema_path(project_id, schema_id)
 
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.get_schema(channel, request, auth_opts)
-    end
+      fn channel ->
+        request = %PubsubV1.GetSchemaRequest{
+          name: schema_path,
+          view: view_enum
+        }
 
-    case Client.execute(operation) do
-      {:ok, {:ok, result}} -> {:ok, result}
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+        SchemaStub.get_schema(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_result()
     end
   end
 
-  @doc """
-  Creates a new schema.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `schema_id`: The schema identifier
-  - `type`: Schema type (`:protocol_buffer` or `:avro`)
-  - `definition`: The schema definition string
-
-  ## Returns
-  - `{:ok, schema}` - Created schema
-  - `{:error, reason}` - Error creating schema
-
-  ## Examples
-
-      # Create Protocol Buffer schema
-      protobuf_definition = '''
-      syntax = "proto3";
-
-      message UserEvent {
-        string user_id = 1;
-        string event_type = 2;
-        int64 timestamp = 3;
-      }
-      '''
-
-      {:ok, schema} = PubsubGrpc.Schema.create_schema(
-        "my-project",
-        "user-event-schema",
-        :protocol_buffer,
-        protobuf_definition
-      )
-
-      # Create Avro schema
-      avro_definition = '''
-      {
-        "type": "record",
-        "name": "UserEvent",
-        "fields": [
-          {"name": "user_id", "type": "string"},
-          {"name": "event_type", "type": "string"},
-          {"name": "timestamp", "type": "long"}
-        ]
-      }
-      '''
-
-      {:ok, schema} = PubsubGrpc.Schema.create_schema(
-        "my-project",
-        "user-event-avro-schema",
-        :avro,
-        avro_definition
-      )
-
-  """
   @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) ::
-          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, any()}
+          {:ok, PubsubV1.Schema.t()} | {:error, Error.t()}
   def create_schema(project_id, schema_id, type, definition) do
-    project_path = "projects/#{project_id}"
-    schema_type = schema_type_atom_to_enum(type)
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_schema_id(schema_id),
+         {:ok, type_enum} <- Validation.validate_schema_type(type),
+         {:ok, grpc_opts} <- grpc_opts() do
+      project_path = "projects/#{project_id}"
 
-    operation = fn channel ->
-      schema = %Google.Pubsub.V1.Schema{
-        type: schema_type,
-        definition: definition
-      }
+      fn channel ->
+        schema = %PubsubV1.Schema{
+          type: type_enum,
+          definition: definition
+        }
 
-      request = %Google.Pubsub.V1.CreateSchemaRequest{
-        parent: project_path,
-        schema_id: schema_id,
-        schema: schema
-      }
+        request = %PubsubV1.CreateSchemaRequest{
+          parent: project_path,
+          schema_id: schema_id,
+          schema: schema
+        }
 
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.create_schema(channel, request, auth_opts)
-    end
-
-    case Client.execute(operation) do
-      {:ok, {:ok, result}} -> {:ok, result}
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+        SchemaStub.create_schema(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_result()
     end
   end
 
-  @doc """
-  Deletes a schema.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `schema_id`: The schema identifier
-
-  ## Returns
-  - `:ok` - Successfully deleted schema
-  - `{:error, reason}` - Error deleting schema
-
-  ## Examples
-
-      :ok = PubsubGrpc.Schema.delete_schema("my-project", "old-schema")
-
-  """
-  @spec delete_schema(String.t(), String.t()) :: :ok | {:error, any()}
+  @spec delete_schema(String.t(), String.t()) :: :ok | {:error, Error.t()}
   def delete_schema(project_id, schema_id) do
-    schema_path = schema_path(project_id, schema_id)
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_schema_id(schema_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      schema_path = schema_path(project_id, schema_id)
 
-    operation = fn channel ->
-      request = %Google.Pubsub.V1.DeleteSchemaRequest{name: schema_path}
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.delete_schema(channel, request, auth_opts)
-    end
-
-    case Client.execute(operation) do
-      {:ok, {:ok, %Google.Protobuf.Empty{}}} -> :ok
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  @doc """
-  Lists revisions of a schema.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `schema_id`: The schema identifier
-  - `opts`: Optional parameters
-    - `:view` - Schema view level (`:basic` or `:full`, default: `:basic`)
-    - `:page_size` - Maximum number of revisions to return
-    - `:page_token` - Token for pagination
-
-  ## Returns
-  - `{:ok, %{schemas: schema_revisions, next_page_token: token}}` - List of schema revisions
-  - `{:error, reason}` - Error listing schema revisions
-
-  ## Examples
-
-      {:ok, result} = PubsubGrpc.Schema.list_schema_revisions("my-project", "my-schema")
-      IO.inspect(result.schemas)  # List of schema revision objects
-
-  """
-  @spec list_schema_revisions(String.t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
-  def list_schema_revisions(project_id, schema_id, opts \\ []) do
-    schema_path = schema_path(project_id, schema_id)
-    view = schema_view_atom_to_enum(opts[:view] || :basic)
-
-    operation = fn channel ->
-      request = %Google.Pubsub.V1.ListSchemaRevisionsRequest{
-        name: schema_path,
-        view: view,
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
-
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.list_schema_revisions(channel, request, auth_opts)
-    end
-
-    case Client.execute(operation) do
-      {:ok, {:ok, response}} ->
-        {:ok, %{schemas: response.schemas, next_page_token: response.next_page_token}}
-
-      {:ok, {:error, error}} ->
-        {:error, error}
-
-      {:error, reason} ->
-        {:error, reason}
+      fn channel ->
+        request = %PubsubV1.DeleteSchemaRequest{name: schema_path}
+        SchemaStub.delete_schema(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_empty_result()
     end
   end
 
-  @doc """
-  Validates a schema definition.
-
-  ## Parameters
-  - `project_id`: The Google Cloud project ID
-  - `type`: Schema type (`:protocol_buffer` or `:avro`)
-  - `definition`: The schema definition string
-
-  ## Returns
-  - `{:ok, validation_result}` - Validation successful
-  - `{:error, reason}` - Validation error
-
-  ## Examples
-
-      protobuf_def = '''
-      syntax = "proto3";
-      message User { string name = 1; }
-      '''
-
-      {:ok, result} = PubsubGrpc.Schema.validate_schema(
-        "my-project",
-        :protocol_buffer,
-        protobuf_def
-      )
-
-  """
   @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) ::
-          {:ok, any()} | {:error, any()}
+          {:ok, PubsubV1.ValidateSchemaResponse.t()} | {:error, Error.t()}
   def validate_schema(project_id, type, definition) do
-    project_path = "projects/#{project_id}"
-    schema_type = schema_type_atom_to_enum(type)
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, type_enum} <- Validation.validate_schema_type(type),
+         {:ok, grpc_opts} <- grpc_opts() do
+      project_path = "projects/#{project_id}"
 
-    operation = fn channel ->
-      schema = %Google.Pubsub.V1.Schema{
-        type: schema_type,
-        definition: definition
-      }
+      fn channel ->
+        schema = %PubsubV1.Schema{
+          type: type_enum,
+          definition: definition
+        }
 
-      request = %Google.Pubsub.V1.ValidateSchemaRequest{
-        parent: project_path,
-        schema: schema
-      }
+        request = %PubsubV1.ValidateSchemaRequest{
+          parent: project_path,
+          schema: schema
+        }
 
-      auth_opts = PubsubGrpc.Auth.request_opts()
-      Google.Pubsub.V1.SchemaService.Stub.validate_schema(channel, request, auth_opts)
-    end
-
-    case Client.execute(operation) do
-      {:ok, {:ok, result}} -> {:ok, result}
-      {:ok, {:error, error}} -> {:error, error}
-      {:error, reason} -> {:error, reason}
+        SchemaStub.validate_schema(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_result()
     end
   end
 
-  # TODO: Add validate_message function
-  # Note: ValidateMessageRequest uses oneof fields which need special handling
+  @spec list_schema_revisions(String.t(), String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
+  def list_schema_revisions(project_id, schema_id, opts \\ []) do
+    view = opts[:view] || :basic
 
-  # Private helper functions
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_schema_id(schema_id),
+         {:ok, view_enum} <- Validation.validate_schema_view(view),
+         {:ok, grpc_opts} <- grpc_opts() do
+      schema_path = schema_path(project_id, schema_id)
+
+      fn channel ->
+        request = %PubsubV1.ListSchemaRevisionsRequest{
+          name: schema_path,
+          view: view_enum,
+          page_size: Keyword.get(opts, :page_size, 0),
+          page_token: Keyword.get(opts, :page_token, "")
+        }
+
+        SchemaStub.list_schema_revisions(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_list_result(:schemas, :next_page_token)
+    end
+  end
+
+  @doc """
+  Validates a message against an existing schema by name.
+
+  ## Parameters
+  - `schema_name` - Schema ID or full resource name
+  - `message` - Message bytes to validate
+  - `encoding` - `:json` or `:binary`
+
+  """
+  @spec validate_message(String.t(), String.t(), binary(), :json | :binary) ::
+          {:ok, PubsubV1.ValidateMessageResponse.t()} | {:error, Error.t()}
+  def validate_message(project_id, schema_name, message, encoding) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
+         {:ok, grpc_opts} <- grpc_opts() do
+      project_path = "projects/#{project_id}"
+
+      # If schema_name doesn't contain a slash, treat it as a schema ID
+      name =
+        if String.contains?(schema_name, "/") do
+          schema_name
+        else
+          schema_path(project_id, schema_name)
+        end
+
+      fn channel ->
+        request = %PubsubV1.ValidateMessageRequest{
+          parent: project_path,
+          schema_spec: {:name, name},
+          message: message,
+          encoding: encoding_enum
+        }
+
+        SchemaStub.validate_message(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_result()
+    end
+  end
+
+  @doc """
+  Validates a message against an inline schema definition.
+
+  ## Parameters
+  - `type` - `:protocol_buffer` or `:avro`
+  - `definition` - Schema definition string
+  - `message` - Message bytes to validate
+  - `encoding` - `:json` or `:binary`
+
+  """
+  @spec validate_message_with_schema(
+          String.t(),
+          :protocol_buffer | :avro,
+          String.t(),
+          binary(),
+          :json | :binary
+        ) ::
+          {:ok, PubsubV1.ValidateMessageResponse.t()} | {:error, Error.t()}
+  def validate_message_with_schema(project_id, type, definition, message, encoding) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, type_enum} <- Validation.validate_schema_type(type),
+         {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
+         {:ok, grpc_opts} <- grpc_opts() do
+      project_path = "projects/#{project_id}"
+
+      fn channel ->
+        schema = %PubsubV1.Schema{
+          type: type_enum,
+          definition: definition
+        }
+
+        request = %PubsubV1.ValidateMessageRequest{
+          parent: project_path,
+          schema_spec: {:schema, schema},
+          message: message,
+          encoding: encoding_enum
+        }
+
+        SchemaStub.validate_message(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> unwrap_result()
+    end
+  end
+
+  # Private helpers
+
+  defp grpc_opts do
+    timeout = Application.get_env(:pubsub_grpc, :default_timeout, 30_000)
+
+    case PubsubGrpc.Auth.request_opts() do
+      {:ok, opts} -> {:ok, opts ++ [timeout: timeout]}
+      {:error, _} = error -> error
+    end
+  end
 
   defp schema_path(project_id, schema_id) do
     "projects/#{project_id}/schemas/#{schema_id}"
   end
 
-  defp schema_view_atom_to_enum(:basic), do: :BASIC
-  defp schema_view_atom_to_enum(:full), do: :FULL
-  defp schema_view_atom_to_enum(_), do: :BASIC
+  defp unwrap_result({:ok, {:ok, result}}), do: {:ok, result}
+  defp unwrap_result(other), do: unwrap_error(other)
 
-  defp schema_type_atom_to_enum(:protocol_buffer), do: :PROTOCOL_BUFFER
-  defp schema_type_atom_to_enum(:avro), do: :AVRO
-  defp schema_type_atom_to_enum(_), do: :PROTOCOL_BUFFER
+  defp unwrap_empty_result({:ok, {:ok, %Google.Protobuf.Empty{}}}), do: :ok
+  defp unwrap_empty_result(other), do: unwrap_error(other)
 
-  # defp encoding_atom_to_enum(:json), do: :JSON
-  # defp encoding_atom_to_enum(:binary), do: :BINARY
-  # defp encoding_atom_to_enum(_), do: :JSON
+  defp unwrap_list_result({:ok, {:ok, response}}, items_key, token_key) do
+    {:ok, %{items_key => Map.get(response, items_key), token_key => Map.get(response, token_key)}}
+  end
+
+  defp unwrap_list_result(other, _items_key, _token_key), do: unwrap_error(other)
+
+  defp unwrap_error({:ok, {:error, %GRPC.RPCError{} = error}}) do
+    {:error, Error.from_grpc_error(error)}
+  end
+
+  defp unwrap_error({:ok, {:error, error}}) do
+    {:error, Error.new(:internal, "unexpected error: #{inspect(error)}", error)}
+  end
+
+  defp unwrap_error({:error, reason}) do
+    {:error, Error.new(:connection_error, "connection error: #{inspect(reason)}", reason)}
+  end
 end

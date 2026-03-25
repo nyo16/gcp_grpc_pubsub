@@ -24,6 +24,7 @@ defmodule Mix.Tasks.Emulator.Start do
         else
           start_emulator()
         end
+
       _ ->
         start_emulator()
     end
@@ -32,11 +33,16 @@ defmodule Mix.Tasks.Emulator.Start do
   defp start_emulator do
     # Start the emulator
     cmd = [
-      "run", "--rm", "-d",
-      "--name", "pubsub-emulator",
-      "-p", "8085:8085",
+      "run",
+      "--rm",
+      "-d",
+      "--name",
+      "pubsub-emulator",
+      "-p",
+      "8085:8085",
       "google/cloud-sdk:emulators",
-      "/bin/bash", "-c",
+      "/bin/bash",
+      "-c",
       "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
     ]
 
@@ -45,6 +51,7 @@ defmodule Mix.Tasks.Emulator.Start do
         Mix.Shell.IO.info("Emulator started successfully on port 8085")
         Mix.Shell.IO.info("Project ID: test-project-id")
         Mix.Shell.IO.info("Use 'mix emulator.stop' to stop the emulator")
+
       {error, _} ->
         Mix.Shell.IO.error("Failed to start emulator: #{error}")
     end

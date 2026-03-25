@@ -81,8 +81,11 @@ defmodule PubsubGrpc.Application do
   """
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
+    PubsubGrpc.Auth.init_cache()
     config = build_connection_pool_config()
 
     children = [
@@ -99,8 +102,16 @@ defmodule PubsubGrpc.Application do
   defp build_connection_pool_config do
     # Try to load from new GrpcConnectionPool configuration first
     case GrpcConnectionPool.Config.from_env(:pubsub_grpc) do
-      {:ok, config} -> config
-      {:error, _} -> build_legacy_config()
+      {:ok, config} ->
+        Logger.info("PubsubGrpc: connection pool configured from application env")
+        config
+
+      {:error, reason} ->
+        Logger.debug(
+          "PubsubGrpc: no pool config in env (#{inspect(reason)}), trying legacy config"
+        )
+
+        build_legacy_config()
     end
   end
 
@@ -151,10 +162,14 @@ defmodule PubsubGrpc.Application do
 
     case GrpcConnectionPool.Config.new(config_opts) do
       {:ok, config} ->
+        Logger.info("PubsubGrpc: connection pool configured from legacy config")
         config
 
-      {:error, _reason} ->
-        # Fallback to basic production config
+      {:error, reason} ->
+        Logger.warning(
+          "PubsubGrpc: legacy config failed (#{inspect(reason)}), falling back to production defaults"
+        )
+
         {:ok, config} =
           GrpcConnectionPool.Config.production(
             host: "pubsub.googleapis.com",

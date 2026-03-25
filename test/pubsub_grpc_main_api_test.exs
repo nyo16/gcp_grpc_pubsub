@@ -2,7 +2,9 @@ defmodule PubsubGrpcMainApiTest do
   use ExUnit.Case
   doctest PubsubGrpc
 
+  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.EmulatorHelper
+  alias PubsubV1.Publisher.Stub, as: PublisherStub
 
   @moduletag :integration
 
@@ -182,9 +184,9 @@ defmodule PubsubGrpcMainApiTest do
       PubsubGrpc.with_connection(fn channel ->
         # Create topic using direct GRPC call
         topic_path = "projects/test-project-id/topics/#{topic_name}"
-        request = %Google.Pubsub.V1.Topic{name: topic_path}
-        auth_opts = PubsubGrpc.Auth.request_opts()
-        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, auth_opts)
+        request = %PubsubV1.Topic{name: topic_path}
+        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts()
+        PublisherStub.create_topic(channel, request, auth_opts)
       end)
 
     assert {:ok, topic} = result
@@ -193,14 +195,14 @@ defmodule PubsubGrpcMainApiTest do
 
   test "execute custom operation using main API" do
     # Test a custom operation - getting a topic that doesn't exist
-    operation = fn channel, _params ->
-      request = %Google.Pubsub.V1.GetTopicRequest{
+    operation = fn channel ->
+      request = %PubsubV1.GetTopicRequest{
         topic: "projects/test-project-id/topics/non-existent-topic"
       }
 
-      Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request)
+      PublisherStub.get_topic(channel, request)
     end
 
-    assert {:error, %GRPC.RPCError{status: 5}} = PubsubGrpc.execute(operation)
+    assert {:error, %PubsubGrpc.Error{code: :not_found}} = PubsubGrpc.execute(operation)
   end
 end
