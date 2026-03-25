@@ -47,6 +47,8 @@ defmodule PubsubGrpc.EmulatorHelper do
          ) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
+        # Give emulator additional time to fully initialize gRPC services
+        :timer.sleep(2000)
         :ok
 
       {:error, _} ->
