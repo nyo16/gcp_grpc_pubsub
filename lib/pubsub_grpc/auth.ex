@@ -109,20 +109,12 @@ defmodule PubsubGrpc.Auth do
   # Private functions
 
   defp get_cached_token do
-    if :ets.whereis(@cache_table) != :undefined do
-      case :ets.lookup(@cache_table, @cache_key) do
-        [{@cache_key, token, expires_at}] ->
-          if System.monotonic_time(:millisecond) < expires_at do
-            {:ok, token}
-          else
-            :miss
-          end
-
-        [] ->
-          :miss
-      end
+    with true <- :ets.whereis(@cache_table) != :undefined,
+         [{@cache_key, token, expires_at}] <- :ets.lookup(@cache_table, @cache_key),
+         true <- System.monotonic_time(:millisecond) < expires_at do
+      {:ok, token}
     else
-      :miss
+      _ -> :miss
     end
   end
 
@@ -147,69 +139,66 @@ defmodule PubsubGrpc.Auth do
 
   defp get_token_from_goth(goth_name) do
     if Code.ensure_loaded?(Goth) do
-      case Goth.fetch(goth_name) do
-        {:ok, %{token: token, type: type, expires: expires}} ->
-          bearer = "#{type} #{token}"
-          ttl_ms = max(DateTime.diff(expires, DateTime.utc_now(), :millisecond) - 60_000, 0)
-          cache_token(bearer, ttl_ms)
-          {:ok, bearer}
-
-        {:ok, %{token: token, type: type}} ->
-          bearer = "#{type} #{token}"
-          cache_token(bearer, @cli_token_ttl_ms)
-          {:ok, bearer}
-
-        {:error, reason} ->
-          Logger.warning(
-            "PubsubGrpc: Goth.fetch failed (#{inspect(reason)}), falling back to gcloud CLI"
-          )
-
-          case get_token_fallback() do
-            {:ok, _} = ok ->
-              ok
-
-            {:error, _} ->
-              {:error,
-               Error.new(
-                 :unauthenticated,
-                 "authentication failed: Goth error: #{inspect(reason)}",
-                 reason
-               )}
-          end
-      end
+      goth_name |> Goth.fetch() |> handle_goth_result()
     else
       get_token_fallback()
     end
   end
 
+  defp handle_goth_result({:ok, %{token: token, type: type, expires: expires}}) do
+    bearer = "#{type} #{token}"
+    ttl_ms = max(DateTime.diff(expires, DateTime.utc_now(), :millisecond) - 60_000, 0)
+    cache_token(bearer, ttl_ms)
+    {:ok, bearer}
+  end
+
+  defp handle_goth_result({:ok, %{token: token, type: type}}) do
+    bearer = "#{type} #{token}"
+    cache_token(bearer, @cli_token_ttl_ms)
+    {:ok, bearer}
+  end
+
+  defp handle_goth_result({:error, reason}) do
+    Logger.warning(
+      "PubsubGrpc: Goth.fetch failed (#{inspect(reason)}), falling back to gcloud CLI"
+    )
+
+    case get_token_fallback() do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, _} ->
+        {:error,
+         Error.new(:unauthenticated, "auth failed: Goth error: #{inspect(reason)}", reason)}
+    end
+  end
+
   defp get_token_fallback do
-    try do
-      case System.cmd("gcloud", ["auth", "application-default", "print-access-token"],
-             stderr_to_stdout: true
-           ) do
-        {token_output, 0} ->
-          token = "Bearer #{String.trim(token_output)}"
-          cache_token(token, @cli_token_ttl_ms)
-          {:ok, token}
+    case System.cmd("gcloud", ["auth", "application-default", "print-access-token"],
+           stderr_to_stdout: true
+         ) do
+      {token_output, 0} ->
+        token = "Bearer #{String.trim(token_output)}"
+        cache_token(token, @cli_token_ttl_ms)
+        {:ok, token}
 
-        {error_output, exit_code} ->
-          Logger.error(
-            "PubsubGrpc: gcloud CLI auth failed (exit #{exit_code}): #{String.trim(error_output)}"
-          )
-
-          {:error,
-           Error.new(:unauthenticated, "gcloud CLI auth failed: #{String.trim(error_output)}")}
-      end
-    rescue
-      e ->
-        Logger.error("PubsubGrpc: auth unavailable - #{Exception.message(e)}")
+      {error_output, exit_code} ->
+        Logger.error(
+          "PubsubGrpc: gcloud CLI auth failed (exit #{exit_code}): #{String.trim(error_output)}"
+        )
 
         {:error,
-         Error.new(:unauthenticated, "no authentication available: #{Exception.message(e)}", e)}
-    catch
-      kind, reason ->
-        Logger.error("PubsubGrpc: auth unavailable - #{inspect({kind, reason})}")
-        {:error, Error.new(:unauthenticated, "no authentication available", {kind, reason})}
+         Error.new(:unauthenticated, "gcloud CLI auth failed: #{String.trim(error_output)}")}
     end
+  rescue
+    e ->
+      Logger.error("PubsubGrpc: auth unavailable - #{Exception.message(e)}")
+
+      {:error,
+       Error.new(:unauthenticated, "no authentication available: #{Exception.message(e)}", e)}
+  catch
+    kind, reason ->
+      Logger.error("PubsubGrpc: auth unavailable - #{inspect({kind, reason})}")
+      {:error, Error.new(:unauthenticated, "no authentication available", {kind, reason})}
   end
 end

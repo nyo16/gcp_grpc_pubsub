@@ -6,7 +6,9 @@ defmodule PubsubGrpc.Schema do
   and format of messages. Supports Protocol Buffer and Avro formats.
   """
 
+  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.{Client, Error, Validation}
+  alias PubsubV1.SchemaService.Stub, as: SchemaStub
 
   @spec list_schemas(String.t(), keyword()) ::
           {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
@@ -19,14 +21,14 @@ defmodule PubsubGrpc.Schema do
       project_path = "projects/#{project_id}"
 
       fn channel ->
-        request = %Google.Pubsub.V1.ListSchemasRequest{
+        request = %PubsubV1.ListSchemasRequest{
           parent: project_path,
           view: view_enum,
           page_size: Keyword.get(opts, :page_size, 0),
           page_token: Keyword.get(opts, :page_token, "")
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.list_schemas(channel, request, grpc_opts)
+        SchemaStub.list_schemas(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_list_result(:schemas, :next_page_token)
@@ -34,7 +36,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec get_schema(String.t(), String.t(), keyword()) ::
-          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, Error.t()}
+          {:ok, PubsubV1.Schema.t()} | {:error, Error.t()}
   def get_schema(project_id, schema_id, opts \\ []) do
     view = opts[:view] || :full
 
@@ -45,12 +47,12 @@ defmodule PubsubGrpc.Schema do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
-        request = %Google.Pubsub.V1.GetSchemaRequest{
+        request = %PubsubV1.GetSchemaRequest{
           name: schema_path,
           view: view_enum
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.get_schema(channel, request, grpc_opts)
+        SchemaStub.get_schema(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_result()
@@ -58,7 +60,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t()) ::
-          {:ok, Google.Pubsub.V1.Schema.t()} | {:error, Error.t()}
+          {:ok, PubsubV1.Schema.t()} | {:error, Error.t()}
   def create_schema(project_id, schema_id, type, definition) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
@@ -67,18 +69,18 @@ defmodule PubsubGrpc.Schema do
       project_path = "projects/#{project_id}"
 
       fn channel ->
-        schema = %Google.Pubsub.V1.Schema{
+        schema = %PubsubV1.Schema{
           type: type_enum,
           definition: definition
         }
 
-        request = %Google.Pubsub.V1.CreateSchemaRequest{
+        request = %PubsubV1.CreateSchemaRequest{
           parent: project_path,
           schema_id: schema_id,
           schema: schema
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.create_schema(channel, request, grpc_opts)
+        SchemaStub.create_schema(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_result()
@@ -93,8 +95,8 @@ defmodule PubsubGrpc.Schema do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
-        request = %Google.Pubsub.V1.DeleteSchemaRequest{name: schema_path}
-        Google.Pubsub.V1.SchemaService.Stub.delete_schema(channel, request, grpc_opts)
+        request = %PubsubV1.DeleteSchemaRequest{name: schema_path}
+        SchemaStub.delete_schema(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_empty_result()
@@ -102,7 +104,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t()) ::
-          {:ok, Google.Pubsub.V1.ValidateSchemaResponse.t()} | {:error, Error.t()}
+          {:ok, PubsubV1.ValidateSchemaResponse.t()} | {:error, Error.t()}
   def validate_schema(project_id, type, definition) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
@@ -110,17 +112,17 @@ defmodule PubsubGrpc.Schema do
       project_path = "projects/#{project_id}"
 
       fn channel ->
-        schema = %Google.Pubsub.V1.Schema{
+        schema = %PubsubV1.Schema{
           type: type_enum,
           definition: definition
         }
 
-        request = %Google.Pubsub.V1.ValidateSchemaRequest{
+        request = %PubsubV1.ValidateSchemaRequest{
           parent: project_path,
           schema: schema
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.validate_schema(channel, request, grpc_opts)
+        SchemaStub.validate_schema(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_result()
@@ -139,14 +141,14 @@ defmodule PubsubGrpc.Schema do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
-        request = %Google.Pubsub.V1.ListSchemaRevisionsRequest{
+        request = %PubsubV1.ListSchemaRevisionsRequest{
           name: schema_path,
           view: view_enum,
           page_size: Keyword.get(opts, :page_size, 0),
           page_token: Keyword.get(opts, :page_token, "")
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.list_schema_revisions(channel, request, grpc_opts)
+        SchemaStub.list_schema_revisions(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_list_result(:schemas, :next_page_token)
@@ -163,7 +165,7 @@ defmodule PubsubGrpc.Schema do
 
   """
   @spec validate_message(String.t(), String.t(), binary(), :json | :binary) ::
-          {:ok, Google.Pubsub.V1.ValidateMessageResponse.t()} | {:error, Error.t()}
+          {:ok, PubsubV1.ValidateMessageResponse.t()} | {:error, Error.t()}
   def validate_message(project_id, schema_name, message, encoding) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
@@ -179,14 +181,14 @@ defmodule PubsubGrpc.Schema do
         end
 
       fn channel ->
-        request = %Google.Pubsub.V1.ValidateMessageRequest{
+        request = %PubsubV1.ValidateMessageRequest{
           parent: project_path,
           schema_spec: {:name, name},
           message: message,
           encoding: encoding_enum
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.validate_message(channel, request, grpc_opts)
+        SchemaStub.validate_message(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_result()
@@ -210,7 +212,7 @@ defmodule PubsubGrpc.Schema do
           binary(),
           :json | :binary
         ) ::
-          {:ok, Google.Pubsub.V1.ValidateMessageResponse.t()} | {:error, Error.t()}
+          {:ok, PubsubV1.ValidateMessageResponse.t()} | {:error, Error.t()}
   def validate_message_with_schema(project_id, type, definition, message, encoding) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
@@ -219,19 +221,19 @@ defmodule PubsubGrpc.Schema do
       project_path = "projects/#{project_id}"
 
       fn channel ->
-        schema = %Google.Pubsub.V1.Schema{
+        schema = %PubsubV1.Schema{
           type: type_enum,
           definition: definition
         }
 
-        request = %Google.Pubsub.V1.ValidateMessageRequest{
+        request = %PubsubV1.ValidateMessageRequest{
           parent: project_path,
           schema_spec: {:schema, schema},
           message: message,
           encoding: encoding_enum
         }
 
-        Google.Pubsub.V1.SchemaService.Stub.validate_message(channel, request, grpc_opts)
+        SchemaStub.validate_message(channel, request, grpc_opts)
       end
       |> Client.execute()
       |> unwrap_result()

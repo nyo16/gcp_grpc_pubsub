@@ -95,17 +95,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: [compile]
 
-    services:
-      pubsub-emulator:
-        image: google/cloud-sdk:489.0.0-stable
-        ports:
-          - 8085:8085
-        options: >-
-          --entrypoint=/bin/bash
-          --command="gcloud components install pubsub-emulator && gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=test-project-id"
-
     steps:
       - uses: actions/checkout@v6
+
+      - name: Start Pub/Sub emulator
+        run: |
+          docker run -d --name pubsub-emulator -p 8085:8085 \
+            google/cloud-sdk:489.0.0-stable \
+            bash -c "gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=test-project-id"
+          # Wait for emulator to be ready
+          for i in $(seq 1 30); do
+            if nc -z localhost 8085 2>/dev/null; then
+              echo "Emulator is ready"
+              break
+            fi
+            echo "Waiting for emulator... ($i/30)"
+            sleep 2
+          done
 
       - uses: erlef/setup-beam@v1
         with:

@@ -64,9 +64,10 @@ defmodule PubsubGrpc.MixProject do
 
   defp deps do
     [
-      {:grpc_connection_pool, "0.2.1"},
+      {:grpc_connection_pool, "0.2.3"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:goth, "~> 1.4", optional: true}
     ]
   end

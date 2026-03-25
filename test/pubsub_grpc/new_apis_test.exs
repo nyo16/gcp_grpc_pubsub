@@ -82,7 +82,7 @@ defmodule PubsubGrpc.NewApisTest do
       {:ok, _} = PubsubGrpc.publish_message("test-project-id", topic_name, "test message")
 
       messages = pull_with_retry("test-project-id", subscription_name, 5)
-      assert length(messages) >= 1
+      assert messages != []
 
       ack_ids = Enum.map(messages, & &1.ack_id)
 
@@ -108,7 +108,7 @@ defmodule PubsubGrpc.NewApisTest do
       {:ok, _} = PubsubGrpc.publish_message("test-project-id", topic_name, "nack test")
 
       messages = pull_with_retry("test-project-id", subscription_name, 5)
-      assert length(messages) >= 1
+      assert messages != []
 
       ack_ids = Enum.map(messages, & &1.ack_id)
 
@@ -116,7 +116,7 @@ defmodule PubsubGrpc.NewApisTest do
 
       # Message should be redelivered
       redelivered = pull_with_retry("test-project-id", subscription_name, 10)
-      assert length(redelivered) >= 1
+      assert redelivered != []
 
       new_ack_ids = Enum.map(redelivered, & &1.ack_id)
       PubsubGrpc.acknowledge("test-project-id", subscription_name, new_ack_ids)
@@ -124,20 +124,22 @@ defmodule PubsubGrpc.NewApisTest do
   end
 
   defp pull_with_retry(project, sub, attempts) do
-    Enum.reduce_while(1..attempts, [], fn _attempt, acc ->
-      case PubsubGrpc.pull(project, sub, 10) do
-        {:ok, []} when acc == [] ->
-          :timer.sleep(500)
-          {:cont, acc}
+    Enum.reduce_while(1..attempts, [], &pull_attempt(project, sub, &1, &2))
+  end
 
-        {:ok, msgs} ->
-          all = acc ++ msgs
-          if length(all) >= 1, do: {:halt, all}, else: {:cont, all}
+  defp pull_attempt(project, sub, _attempt, acc) do
+    case PubsubGrpc.pull(project, sub, 10) do
+      {:ok, []} when acc == [] ->
+        :timer.sleep(500)
+        {:cont, acc}
 
-        {:error, _} ->
-          :timer.sleep(500)
-          {:cont, acc}
-      end
-    end)
+      {:ok, msgs} ->
+        all = acc ++ msgs
+        if all != [], do: {:halt, all}, else: {:cont, all}
+
+      {:error, _} ->
+        :timer.sleep(500)
+        {:cont, acc}
+    end
   end
 end
