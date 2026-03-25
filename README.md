@@ -310,12 +310,123 @@ GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
 ### Emulator Not Working
 
 ```bash
-# Check if emulator is running
-docker ps | grep pubsub
+# Run all tests (starts emulator automatically)
+mix test
+
+# Run only connection pool tests
+mix test --include connection_pool
+
+# Run only integration tests with emulator
+mix test --include integration
+```
+
+## Development with Pub/Sub Emulator
+
+This project includes multiple ways to run a local Google Cloud Pub/Sub emulator for development and testing.
+
+### Quick Start
+
+#### Using Mix Commands (Recommended)
+
+```bash
+# 1. Start the emulator
+mix emulator.start
+
+# 2. Run your application in development
+mix run
+
+# 3. Run tests with emulator
+mix test --include integration
+
+# 4. Stop the emulator when done
+mix emulator.stop
+```
+
+#### Using Docker Compose
+
+```bash
+# 1. Start the emulator
+docker-compose up -d
+
+# 2. Run your application in development
+mix run
 
 # Restart emulator
 docker-compose down
+```
+
+#### Using Docker Command Directly
+
+```bash
+# Start the emulator
+docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+
+# Stop with Ctrl+C or docker stop
+```
+
+### Mix Commands
+
+The project provides convenient Mix tasks for emulator management:
+
+#### `mix emulator.start`
+- Starts the Google Cloud Pub/Sub emulator in a Docker container
+- Uses project ID `test-project-id`
+- Runs on port 8085
+- Container is named `pubsub-emulator` for easy management
+- Checks if emulator is already running to avoid conflicts
+
+#### `mix emulator.stop`
+- Stops the running emulator container
+- Safe to run even if emulator is not running
+
+#### Usage Examples
+
+```bash
+# Check if emulator is already running
+mix emulator.start
+# Output: "Emulator is already running" or "Emulator started successfully on port 8085"
+
+# Stop the emulator
+mix emulator.stop
+# Output: "Emulator stopped successfully" or "Emulator is not running"
+```
+
+### Starting the Emulator
+
+#### Method 1: Mix Command (Recommended)
+```bash
+mix emulator.start
+```
+
+#### Method 2: Docker Compose
+```bash
 docker-compose up -d
+```
+
+#### Method 3: Direct Docker Command
+```bash
+docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+```
+
+All methods start the emulator at `localhost:8085` with project ID `test-project-id`.
+
+### Stopping the Emulator
+
+#### Method 1: Mix Command
+```bash
+mix emulator.stop
+```
+
+#### Method 2: Docker Compose
+```bash
+docker-compose down
+```
+
+#### Method 3: Direct Docker (if started with docker run)
+- Use Ctrl+C to stop
+- Or `docker stop <container_id>`
+
+### Configuration
 
 # Check logs
 docker-compose logs -f pubsub-emulator
