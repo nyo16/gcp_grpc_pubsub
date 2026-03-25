@@ -31,14 +31,16 @@ defmodule GrpcDisconnectFixTest do
 
       assert Process.alive?(worker_pid)
 
-      # Stop the worker — this should NOT raise FunctionClauseError
-      # Worker may be busy connecting, so allow a generous timeout
+      # Stop the worker — this should NOT raise FunctionClauseError.
+      # The worker blocks in gun:await_up for ~5s when the emulator is
+      # unreachable, so the stop timeout must exceed the GRPC connection
+      # timeout to avoid a race between the two.
       result =
         try do
-          GenServer.stop(worker_pid, :normal, 5000)
+          GenServer.stop(worker_pid, :normal, 15_000)
           :ok
         rescue
-          error -> {:error, error}
+          error in [FunctionClauseError] -> {:error, error}
         catch
           :exit, _reason -> :ok
         end
