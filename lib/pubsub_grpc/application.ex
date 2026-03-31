@@ -93,7 +93,7 @@ defmodule PubsubGrpc.Application do
       {GrpcConnectionPool, config}
     ]
 
-    opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor]
+    opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor, max_restarts: 10]
     Supervisor.start_link(children, opts)
   end
 

@@ -147,7 +147,8 @@ defmodule PubsubGrpc.Auth do
 
   defp handle_goth_result({:ok, %{token: token, type: type, expires: expires}}) do
     bearer = "#{type} #{token}"
-    ttl_ms = max(DateTime.diff(expires, DateTime.utc_now(), :millisecond) - 60_000, 0)
+    expires_dt = if is_integer(expires), do: DateTime.from_unix!(expires), else: expires
+    ttl_ms = max(DateTime.diff(expires_dt, DateTime.utc_now(), :millisecond) - 60_000, 0)
     cache_token(bearer, ttl_ms)
     {:ok, bearer}
   end

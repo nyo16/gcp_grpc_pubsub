@@ -10,6 +10,11 @@ defmodule GrpcDisconnectFixTest do
   alias GrpcConnectionPool.Worker
 
   describe "worker disconnect fix" do
+    setup do
+      start_supervised!({Registry, keys: :duplicate, name: :test_registry})
+      :ok
+    end
+
     test "worker can handle Gun connection cleanup without FunctionClauseError" do
       {:ok, config} =
         GrpcConnectionPool.Config.local(
