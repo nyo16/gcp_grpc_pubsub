@@ -12,31 +12,47 @@ defmodule PubsubGrpc.Validation do
     {:error, Error.new(:validation_error, "project_id must be a non-empty string")}
   end
 
-  @spec validate_topic_id(term()) :: {:ok, String.t()} | {:error, Error.t()}
-  def validate_topic_id(topic_id) when is_binary(topic_id) and byte_size(topic_id) > 0 do
-    {:ok, topic_id}
-  end
+  # GCP Pub/Sub resource ID rules: start with a letter, 3-255 chars,
+  # letters/digits/dashes/underscores/periods/tildes/plus/percent.
+  # Names beginning with "goog" are reserved.
+  @resource_id_regex ~r/^[A-Za-z][A-Za-z0-9\-_.~+%]{2,254}$/
 
-  def validate_topic_id(_) do
-    {:error, Error.new(:validation_error, "topic_id must be a non-empty string")}
+  @spec validate_topic_id(term()) :: {:ok, String.t()} | {:error, Error.t()}
+  def validate_topic_id(topic_id) do
+    validate_resource_id(topic_id, "topic_id")
   end
 
   @spec validate_subscription_id(term()) :: {:ok, String.t()} | {:error, Error.t()}
-  def validate_subscription_id(sub_id) when is_binary(sub_id) and byte_size(sub_id) > 0 do
-    {:ok, sub_id}
-  end
-
-  def validate_subscription_id(_) do
-    {:error, Error.new(:validation_error, "subscription_id must be a non-empty string")}
+  def validate_subscription_id(sub_id) do
+    validate_resource_id(sub_id, "subscription_id")
   end
 
   @spec validate_schema_id(term()) :: {:ok, String.t()} | {:error, Error.t()}
-  def validate_schema_id(schema_id) when is_binary(schema_id) and byte_size(schema_id) > 0 do
-    {:ok, schema_id}
+  def validate_schema_id(schema_id) do
+    validate_resource_id(schema_id, "schema_id")
   end
 
-  def validate_schema_id(_) do
-    {:error, Error.new(:validation_error, "schema_id must be a non-empty string")}
+  defp validate_resource_id(id, field) when is_binary(id) do
+    cond do
+      not Regex.match?(@resource_id_regex, id) ->
+        {:error,
+         Error.new(
+           :validation_error,
+           "#{field} must start with a letter and be 3-255 chars of " <>
+             "letters/digits/-_.~+%"
+         )}
+
+      String.starts_with?(id, "goog") ->
+        {:error,
+         Error.new(:validation_error, "#{field} must not begin with reserved prefix 'goog'")}
+
+      true ->
+        {:ok, id}
+    end
+  end
+
+  defp validate_resource_id(_, field) do
+    {:error, Error.new(:validation_error, "#{field} must be a string")}
   end
 
   @spec validate_messages(term()) :: {:ok, [map()]} | {:error, Error.t()}
@@ -47,7 +63,7 @@ defmodule PubsubGrpc.Validation do
       {:error,
        Error.new(
          :validation_error,
-         "each message must be a map with :data (binary) and/or :attributes (map)"
+         "each message must be a map with non-empty :data (binary) or non-empty :attributes (map)"
        )}
     end
   end
@@ -126,7 +142,14 @@ defmodule PubsubGrpc.Validation do
 
   # Private
 
-  defp valid_message?(%{data: data}) when is_binary(data), do: true
+  defp valid_message?(%{data: data, attributes: attrs})
+       when is_binary(data) and is_map(attrs) do
+    byte_size(data) > 0 or map_size(attrs) > 0
+  end
+
+  defp valid_message?(%{data: data}) when is_binary(data) and byte_size(data) > 0, do: true
+
   defp valid_message?(%{attributes: attrs}) when is_map(attrs) and map_size(attrs) > 0, do: true
+
   defp valid_message?(_), do: false
 end

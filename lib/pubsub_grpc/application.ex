@@ -85,16 +85,26 @@ defmodule PubsubGrpc.Application do
 
   @impl true
   def start(_type, _args) do
-    PubsubGrpc.Auth.init_cache()
+    warn_if_emulator_mode()
     config = build_connection_pool_config()
 
     children = [
+      PubsubGrpc.Auth.Cache,
       {GRPC.Client.Supervisor, []},
       {GrpcConnectionPool, config}
     ]
 
     opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor, max_restarts: 10]
     Supervisor.start_link(children, opts)
+  end
+
+  defp warn_if_emulator_mode do
+    if Application.get_env(:pubsub_grpc, :emulator) do
+      Logger.warning(
+        "PubsubGrpc: emulator mode is active — authentication will be skipped. " <>
+          "Remove `config :pubsub_grpc, :emulator, _` for production."
+      )
+    end
   end
 
   # Private functions
@@ -129,7 +139,7 @@ defmodule PubsubGrpc.Application do
               type: :production,
               host: "pubsub.googleapis.com",
               port: 443,
-              ssl: []
+              ssl: production_ssl_opts()
             ],
             pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
           ]
@@ -154,7 +164,7 @@ defmodule PubsubGrpc.Application do
               type: :production,
               host: "pubsub.googleapis.com",
               port: 443,
-              ssl: []
+              ssl: production_ssl_opts()
             ],
             pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
           ]
@@ -166,19 +176,33 @@ defmodule PubsubGrpc.Application do
         config
 
       {:error, reason} ->
-        Logger.warning(
-          "PubsubGrpc: legacy config failed (#{inspect(reason)}), falling back to production defaults"
-        )
+        Logger.error("PubsubGrpc: legacy config failed: #{inspect(reason)}")
 
-        {:ok, config} =
-          GrpcConnectionPool.Config.production(
-            host: "pubsub.googleapis.com",
-            port: 443,
-            pool_name: PubsubGrpc.ConnectionPool,
-            pool_size: pool_size
-          )
+        case GrpcConnectionPool.Config.production(
+               host: "pubsub.googleapis.com",
+               port: 443,
+               pool_name: PubsubGrpc.ConnectionPool,
+               pool_size: pool_size
+             ) do
+          {:ok, config} ->
+            Logger.warning("PubsubGrpc: using production defaults after legacy config failure")
+            config
 
-        config
+          {:error, fallback_reason} ->
+            raise "PubsubGrpc: unable to build connection pool config " <>
+                    "(legacy: #{inspect(reason)}, production default: #{inspect(fallback_reason)})"
+        end
     end
+  end
+
+  # Strict TLS for the production endpoint: verify the server certificate against
+  # the OS trust store. Override via `config :pubsub_grpc, :ssl_opts, [...]`.
+  defp production_ssl_opts do
+    Application.get_env(
+      :pubsub_grpc,
+      :ssl_opts,
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get()
+    )
   end
 end
