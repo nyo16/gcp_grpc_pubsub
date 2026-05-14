@@ -80,19 +80,23 @@ defmodule PubsubGrpc do
           {:ok, Google.Pubsub.V1.Topic.t()} | {:error, Error.t()}
   def create_topic(project_id, topic_id) do
     Telemetry.span(:create_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      with {:ok, _} <- Validation.validate_project_id(project_id),
-           {:ok, _} <- Validation.validate_topic_id(topic_id),
-           {:ok, grpc_opts} <- grpc_opts() do
-        topic_path = topic_path(project_id, topic_id)
-
-        fn channel ->
-          request = %Google.Pubsub.V1.Topic{name: topic_path}
-          Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, grpc_opts)
-        end
-        |> Client.execute()
-        |> Result.unwrap()
-      end
+      do_create_topic(project_id, topic_id)
     end)
+  end
+
+  defp do_create_topic(project_id, topic_id) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      topic_path = topic_path(project_id, topic_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.Topic{name: topic_path}
+        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap()
+    end
   end
 
   @doc """
@@ -107,19 +111,23 @@ defmodule PubsubGrpc do
           {:ok, Google.Pubsub.V1.Topic.t()} | {:error, Error.t()}
   def get_topic(project_id, topic_id) do
     Telemetry.span(:get_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      with {:ok, _} <- Validation.validate_project_id(project_id),
-           {:ok, _} <- Validation.validate_topic_id(topic_id),
-           {:ok, grpc_opts} <- grpc_opts() do
-        topic_path = topic_path(project_id, topic_id)
-
-        fn channel ->
-          request = %Google.Pubsub.V1.GetTopicRequest{topic: topic_path}
-          Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, grpc_opts)
-        end
-        |> Client.execute()
-        |> Result.unwrap()
-      end
+      do_get_topic(project_id, topic_id)
     end)
+  end
+
+  defp do_get_topic(project_id, topic_id) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      topic_path = topic_path(project_id, topic_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.GetTopicRequest{topic: topic_path}
+        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap()
+    end
   end
 
   @doc """
@@ -133,19 +141,23 @@ defmodule PubsubGrpc do
   @spec delete_topic(String.t(), String.t()) :: :ok | {:error, Error.t()}
   def delete_topic(project_id, topic_id) do
     Telemetry.span(:delete_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      with {:ok, _} <- Validation.validate_project_id(project_id),
-           {:ok, _} <- Validation.validate_topic_id(topic_id),
-           {:ok, grpc_opts} <- grpc_opts() do
-        topic_path = topic_path(project_id, topic_id)
-
-        fn channel ->
-          request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
-          Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request, grpc_opts)
-        end
-        |> Client.execute()
-        |> Result.unwrap_empty()
-      end
+      do_delete_topic(project_id, topic_id)
     end)
+  end
+
+  defp do_delete_topic(project_id, topic_id) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      topic_path = topic_path(project_id, topic_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
+        Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_empty()
+    end
   end
 
   @doc """
@@ -163,23 +175,27 @@ defmodule PubsubGrpc do
           {:ok, %{topics: list(), next_page_token: String.t()}} | {:error, Error.t()}
   def list_topics(project_id, opts \\ []) do
     Telemetry.span(:list_topics, %{project_id: project_id}, fn ->
-      with {:ok, _} <- Validation.validate_project_id(project_id),
-           {:ok, grpc_opts} <- grpc_opts(opts) do
-        project_path = "projects/#{project_id}"
-
-        fn channel ->
-          request = %Google.Pubsub.V1.ListTopicsRequest{
-            project: project_path,
-            page_size: Keyword.get(opts, :page_size, 0),
-            page_token: Keyword.get(opts, :page_token, "")
-          }
-
-          Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, grpc_opts)
-        end
-        |> Client.execute()
-        |> Result.unwrap_list(:topics, :next_page_token)
-      end
+      do_list_topics(project_id, opts)
     end)
+  end
+
+  defp do_list_topics(project_id, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      project_path = "projects/#{project_id}"
+
+      fn channel ->
+        request = %Google.Pubsub.V1.ListTopicsRequest{
+          project: project_path,
+          page_size: Keyword.get(opts, :page_size, 0),
+          page_token: Keyword.get(opts, :page_token, "")
+        }
+
+        Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_list(:topics, :next_page_token)
+    end
   end
 
   # Publishing
@@ -211,37 +227,39 @@ defmodule PubsubGrpc do
     Telemetry.span(
       :publish,
       %{project_id: project_id, topic_id: topic_id, message_count: message_count},
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_topic_id(topic_id),
-             {:ok, _} <- Validation.validate_messages(messages),
-             {:ok, grpc_opts} <- grpc_opts(opts) do
-          topic_path = topic_path(project_id, topic_id)
-
-          pubsub_messages =
-            Enum.map(messages, fn msg ->
-              %Google.Pubsub.V1.PubsubMessage{
-                data: Map.get(msg, :data, ""),
-                attributes: Map.get(msg, :attributes, %{})
-              }
-            end)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.PublishRequest{
-              topic: topic_path,
-              messages: pubsub_messages
-            }
-
-            Google.Pubsub.V1.Publisher.Stub.publish(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> case do
-            {:ok, {:ok, response}} -> {:ok, %{message_ids: response.message_ids}}
-            other -> Result.unwrap_error(other)
-          end
-        end
-      end
+      fn -> do_publish(project_id, topic_id, messages, opts) end
     )
+  end
+
+  defp do_publish(project_id, topic_id, messages, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, _} <- Validation.validate_messages(messages),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      topic_path = topic_path(project_id, topic_id)
+
+      pubsub_messages =
+        Enum.map(messages, fn msg ->
+          %Google.Pubsub.V1.PubsubMessage{
+            data: Map.get(msg, :data, ""),
+            attributes: Map.get(msg, :attributes, %{})
+          }
+        end)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.PublishRequest{
+          topic: topic_path,
+          messages: pubsub_messages
+        }
+
+        Google.Pubsub.V1.Publisher.Stub.publish(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> case do
+        {:ok, {:ok, response}} -> {:ok, %{message_ids: response.message_ids}}
+        other -> Result.unwrap_error(other)
+      end
+    end
   end
 
   @doc """
@@ -265,8 +283,6 @@ defmodule PubsubGrpc do
   @spec create_subscription(String.t(), String.t(), String.t(), keyword()) ::
           {:ok, Google.Pubsub.V1.Subscription.t()} | {:error, Error.t()}
   def create_subscription(project_id, topic_id, subscription_id, opts \\ []) do
-    ack_deadline = Keyword.get(opts, :ack_deadline_seconds, 60)
-
     Telemetry.span(
       :create_subscription,
       %{
@@ -274,29 +290,33 @@ defmodule PubsubGrpc do
         topic_id: topic_id,
         subscription_id: subscription_id
       },
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_topic_id(topic_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, _} <- Validation.validate_ack_deadline(ack_deadline),
-             {:ok, grpc_opts} <- grpc_opts(opts) do
-          topic_path = topic_path(project_id, topic_id)
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.Subscription{
-              name: subscription_path,
-              topic: topic_path,
-              ack_deadline_seconds: ack_deadline
-            }
-
-            Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> Result.unwrap()
-        end
-      end
+      fn -> do_create_subscription(project_id, topic_id, subscription_id, opts) end
     )
+  end
+
+  defp do_create_subscription(project_id, topic_id, subscription_id, opts) do
+    ack_deadline = Keyword.get(opts, :ack_deadline_seconds, 60)
+
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, _} <- Validation.validate_ack_deadline(ack_deadline),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      topic_path = topic_path(project_id, topic_id)
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.Subscription{
+          name: subscription_path,
+          topic: topic_path,
+          ack_deadline_seconds: ack_deadline
+        }
+
+        Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap()
+    end
   end
 
   @doc """
@@ -313,21 +333,23 @@ defmodule PubsubGrpc do
     Telemetry.span(
       :get_subscription,
       %{project_id: project_id, subscription_id: subscription_id},
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, grpc_opts} <- grpc_opts() do
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.GetSubscriptionRequest{subscription: subscription_path}
-            Google.Pubsub.V1.Subscriber.Stub.get_subscription(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> Result.unwrap()
-        end
-      end
+      fn -> do_get_subscription(project_id, subscription_id) end
     )
+  end
+
+  defp do_get_subscription(project_id, subscription_id) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.GetSubscriptionRequest{subscription: subscription_path}
+        Google.Pubsub.V1.Subscriber.Stub.get_subscription(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap()
+    end
   end
 
   @doc """
@@ -342,21 +364,23 @@ defmodule PubsubGrpc do
     Telemetry.span(
       :delete_subscription,
       %{project_id: project_id, subscription_id: subscription_id},
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, grpc_opts} <- grpc_opts() do
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
-            Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> Result.unwrap_empty()
-        end
-      end
+      fn -> do_delete_subscription(project_id, subscription_id) end
     )
+  end
+
+  defp do_delete_subscription(project_id, subscription_id) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, grpc_opts} <- grpc_opts() do
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
+        Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_empty()
+    end
   end
 
   @doc """
@@ -374,23 +398,27 @@ defmodule PubsubGrpc do
           {:ok, %{subscriptions: list(), next_page_token: String.t()}} | {:error, Error.t()}
   def list_subscriptions(project_id, opts \\ []) do
     Telemetry.span(:list_subscriptions, %{project_id: project_id}, fn ->
-      with {:ok, _} <- Validation.validate_project_id(project_id),
-           {:ok, grpc_opts} <- grpc_opts(opts) do
-        project_path = "projects/#{project_id}"
-
-        fn channel ->
-          request = %Google.Pubsub.V1.ListSubscriptionsRequest{
-            project: project_path,
-            page_size: Keyword.get(opts, :page_size, 0),
-            page_token: Keyword.get(opts, :page_token, "")
-          }
-
-          Google.Pubsub.V1.Subscriber.Stub.list_subscriptions(channel, request, grpc_opts)
-        end
-        |> Client.execute()
-        |> Result.unwrap_list(:subscriptions, :next_page_token)
-      end
+      do_list_subscriptions(project_id, opts)
     end)
+  end
+
+  defp do_list_subscriptions(project_id, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      project_path = "projects/#{project_id}"
+
+      fn channel ->
+        request = %Google.Pubsub.V1.ListSubscriptionsRequest{
+          project: project_path,
+          page_size: Keyword.get(opts, :page_size, 0),
+          page_token: Keyword.get(opts, :page_token, "")
+        }
+
+        Google.Pubsub.V1.Subscriber.Stub.list_subscriptions(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_list(:subscriptions, :next_page_token)
+    end
   end
 
   # Message Operations
@@ -415,29 +443,31 @@ defmodule PubsubGrpc do
         subscription_id: subscription_id,
         max_messages: max_messages
       },
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, _} <- Validation.validate_max_messages(max_messages),
-             {:ok, grpc_opts} <- grpc_opts(opts) do
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.PullRequest{
-              subscription: subscription_path,
-              max_messages: max_messages
-            }
-
-            Google.Pubsub.V1.Subscriber.Stub.pull(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> case do
-            {:ok, {:ok, response}} -> {:ok, response.received_messages}
-            other -> Result.unwrap_error(other)
-          end
-        end
-      end
+      fn -> do_pull(project_id, subscription_id, max_messages, opts) end
     )
+  end
+
+  defp do_pull(project_id, subscription_id, max_messages, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, _} <- Validation.validate_max_messages(max_messages),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.PullRequest{
+          subscription: subscription_path,
+          max_messages: max_messages
+        }
+
+        Google.Pubsub.V1.Subscriber.Stub.pull(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> case do
+        {:ok, {:ok, response}} -> {:ok, response.received_messages}
+        other -> Result.unwrap_error(other)
+      end
+    end
   end
 
   @doc """
@@ -462,26 +492,28 @@ defmodule PubsubGrpc do
         subscription_id: subscription_id,
         ack_count: ack_count
       },
-      fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-             {:ok, grpc_opts} <- grpc_opts(opts) do
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.AcknowledgeRequest{
-              subscription: subscription_path,
-              ack_ids: ack_ids
-            }
-
-            Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> Result.unwrap_empty()
-        end
-      end
+      fn -> do_acknowledge(project_id, subscription_id, ack_ids, opts) end
     )
+  end
+
+  defp do_acknowledge(project_id, subscription_id, ack_ids, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, _} <- Validation.validate_ack_ids(ack_ids),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.AcknowledgeRequest{
+          subscription: subscription_path,
+          ack_ids: ack_ids
+        }
+
+        Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_empty()
+    end
   end
 
   @doc """
@@ -518,27 +550,31 @@ defmodule PubsubGrpc do
         ack_deadline_seconds: ack_deadline_seconds
       },
       fn ->
-        with {:ok, _} <- Validation.validate_project_id(project_id),
-             {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-             {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-             {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds),
-             {:ok, grpc_opts} <- grpc_opts(opts) do
-          subscription_path = subscription_path(project_id, subscription_id)
-
-          fn channel ->
-            request = %Google.Pubsub.V1.ModifyAckDeadlineRequest{
-              subscription: subscription_path,
-              ack_ids: ack_ids,
-              ack_deadline_seconds: ack_deadline_seconds
-            }
-
-            Google.Pubsub.V1.Subscriber.Stub.modify_ack_deadline(channel, request, grpc_opts)
-          end
-          |> Client.execute()
-          |> Result.unwrap_empty()
-        end
+        do_modify_ack_deadline(project_id, subscription_id, ack_ids, ack_deadline_seconds, opts)
       end
     )
+  end
+
+  defp do_modify_ack_deadline(project_id, subscription_id, ack_ids, ack_deadline_seconds, opts) do
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, _} <- Validation.validate_ack_ids(ack_ids),
+         {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds),
+         {:ok, grpc_opts} <- grpc_opts(opts) do
+      subscription_path = subscription_path(project_id, subscription_id)
+
+      fn channel ->
+        request = %Google.Pubsub.V1.ModifyAckDeadlineRequest{
+          subscription: subscription_path,
+          ack_ids: ack_ids,
+          ack_deadline_seconds: ack_deadline_seconds
+        }
+
+        Google.Pubsub.V1.Subscriber.Stub.modify_ack_deadline(channel, request, grpc_opts)
+      end
+      |> Client.execute()
+      |> Result.unwrap_empty()
+    end
   end
 
   @doc """

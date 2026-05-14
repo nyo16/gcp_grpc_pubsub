@@ -128,47 +128,7 @@ defmodule PubsubGrpc.Application do
   # Support legacy configuration format
   defp build_legacy_config do
     pool_size = Application.get_env(:pubsub_grpc, :default_pool_size, 5)
-    emulator_config = Application.get_env(:pubsub_grpc, :emulator)
-
-    config_opts =
-      case emulator_config do
-        nil ->
-          # Production Google Cloud Pub/Sub
-          [
-            endpoint: [
-              type: :production,
-              host: "pubsub.googleapis.com",
-              port: 443,
-              ssl: production_ssl_opts()
-            ],
-            pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
-          ]
-
-        emulator_opts when is_list(emulator_opts) ->
-          # Local emulator
-          [
-            endpoint: [
-              type: :local,
-              host: emulator_opts[:host] || "localhost",
-              port: emulator_opts[:port] || 8085
-            ],
-            pool: [size: pool_size, name: PubsubGrpc.ConnectionPool],
-            # Disable pinging for emulator
-            connection: [ping_interval: nil, health_check: true]
-          ]
-
-        _ ->
-          # Default production
-          [
-            endpoint: [
-              type: :production,
-              host: "pubsub.googleapis.com",
-              port: 443,
-              ssl: production_ssl_opts()
-            ],
-            pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
-          ]
-      end
+    config_opts = legacy_config_opts(Application.get_env(:pubsub_grpc, :emulator), pool_size)
 
     case GrpcConnectionPool.Config.new(config_opts) do
       {:ok, config} ->
@@ -177,21 +137,49 @@ defmodule PubsubGrpc.Application do
 
       {:error, reason} ->
         Logger.error("PubsubGrpc: legacy config failed: #{inspect(reason)}")
+        production_default_config!(pool_size, reason)
+    end
+  end
 
-        case GrpcConnectionPool.Config.production(
-               host: "pubsub.googleapis.com",
-               port: 443,
-               pool_name: PubsubGrpc.ConnectionPool,
-               pool_size: pool_size
-             ) do
-          {:ok, config} ->
-            Logger.warning("PubsubGrpc: using production defaults after legacy config failure")
-            config
+  defp legacy_config_opts(emulator_opts, pool_size) when is_list(emulator_opts) do
+    [
+      endpoint: [
+        type: :local,
+        host: emulator_opts[:host] || "localhost",
+        port: emulator_opts[:port] || 8085
+      ],
+      pool: [size: pool_size, name: PubsubGrpc.ConnectionPool],
+      # Disable pinging for emulator
+      connection: [ping_interval: nil, health_check: true]
+    ]
+  end
 
-          {:error, fallback_reason} ->
-            raise "PubsubGrpc: unable to build connection pool config " <>
-                    "(legacy: #{inspect(reason)}, production default: #{inspect(fallback_reason)})"
-        end
+  defp legacy_config_opts(_emulator_opts, pool_size) do
+    [
+      endpoint: [
+        type: :production,
+        host: "pubsub.googleapis.com",
+        port: 443,
+        ssl: production_ssl_opts()
+      ],
+      pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
+    ]
+  end
+
+  defp production_default_config!(pool_size, reason) do
+    case GrpcConnectionPool.Config.production(
+           host: "pubsub.googleapis.com",
+           port: 443,
+           pool_name: PubsubGrpc.ConnectionPool,
+           pool_size: pool_size
+         ) do
+      {:ok, config} ->
+        Logger.warning("PubsubGrpc: using production defaults after legacy config failure")
+        config
+
+      {:error, fallback_reason} ->
+        raise "PubsubGrpc: unable to build connection pool config " <>
+                "(legacy: #{inspect(reason)}, production default: #{inspect(fallback_reason)})"
     end
   end
 
