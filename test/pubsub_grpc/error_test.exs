@@ -74,4 +74,25 @@ defmodule PubsubGrpc.ErrorTest do
       assert to_string(error) == "[not_found (gRPC 5)] not found"
     end
   end
+
+  describe "Inspect protocol" do
+    test "does not leak :details into inspect output" do
+      secret = "Bearer ya29.SUPER_SECRET_TOKEN_DO_NOT_LEAK"
+      error = Error.new(:unauthenticated, "auth failed", %{token: secret, refresh_path: "/x"})
+
+      inspected = inspect(error)
+
+      refute inspected =~ secret
+      refute inspected =~ "refresh_path"
+      refute inspected =~ "/x"
+      assert inspected =~ ":unauthenticated"
+      assert inspected =~ "auth failed"
+    end
+
+    test "details remains accessible programmatically" do
+      details = %{token: "secret"}
+      error = Error.new(:unauthenticated, "auth failed", details)
+      assert error.details == details
+    end
+  end
 end

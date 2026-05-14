@@ -33,6 +33,27 @@ defmodule PubsubGrpc.ValidationTest do
     test "rejects nil" do
       assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id(nil)
     end
+
+    test "rejects names starting with digit" do
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id("1topic")
+    end
+
+    test "rejects names with disallowed characters" do
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id("bad/name")
+    end
+
+    test "rejects names below minimum length (3 chars)" do
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id("ab")
+    end
+
+    test "rejects names exceeding 255 chars" do
+      long = "a" <> String.duplicate("b", 255)
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id(long)
+    end
+
+    test "rejects reserved 'goog' prefix" do
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_topic_id("googlike")
+    end
   end
 
   describe "validate_subscription_id/1" do
@@ -92,6 +113,21 @@ defmodule PubsubGrpc.ValidationTest do
     test "rejects non-binary data" do
       assert {:error, %Error{code: :validation_error}} =
                Validation.validate_messages([%{data: 123}])
+    end
+
+    test "rejects messages with empty data binary" do
+      assert {:error, %Error{code: :validation_error}} =
+               Validation.validate_messages([%{data: ""}])
+    end
+
+    test "rejects messages with empty data AND empty attributes" do
+      assert {:error, %Error{code: :validation_error}} =
+               Validation.validate_messages([%{data: "", attributes: %{}}])
+    end
+
+    test "accepts empty data when attributes are non-empty" do
+      messages = [%{data: "", attributes: %{"k" => "v"}}]
+      assert {:ok, ^messages} = Validation.validate_messages(messages)
     end
   end
 

@@ -31,6 +31,7 @@ defmodule PubsubGrpc.Error do
           grpc_status: non_neg_integer() | nil
         }
 
+  @derive {Inspect, only: [:code, :message, :grpc_status]}
   defstruct [:code, :message, :details, :grpc_status]
 
   @grpc_status_codes %{
