@@ -53,44 +53,5 @@ defmodule GrpcDisconnectFixTest do
       assert result == :ok,
              "Worker should shutdown cleanly without FunctionClauseError, got: #{inspect(result)}"
     end
-
-    test "worker handles Gun-based channel cleanup safely" do
-      mock_channel = %GRPC.Channel{
-        host: "localhost",
-        port: 8085,
-        scheme: "http",
-        adapter: GRPC.Client.Adapters.Gun,
-        adapter_payload: %{conn_pid: spawn(fn -> :timer.sleep(100) end)},
-        cred: nil,
-        ref: make_ref(),
-        codec: GRPC.Codec.Proto,
-        interceptors: [],
-        compressor: nil,
-        accepted_compressors: [],
-        headers: []
-      }
-
-      result =
-        try do
-          case mock_channel do
-            %GRPC.Channel{adapter_payload: %{conn_pid: pid}} when is_pid(pid) ->
-              if Process.alive?(pid) do
-                :gun.close(pid)
-              end
-
-              :ok
-
-            _ ->
-              :ok
-          end
-        rescue
-          _error -> :ok
-        catch
-          :exit, _reason -> :ok
-        end
-
-      assert result == :ok,
-             "Gun connection cleanup should work safely, got: #{inspect(result)}"
-    end
   end
 end

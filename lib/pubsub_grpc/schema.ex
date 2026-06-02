@@ -23,7 +23,7 @@ defmodule PubsubGrpc.Schema do
 
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, view_enum} <- Validation.validate_schema_view(view),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -55,7 +55,7 @@ defmodule PubsubGrpc.Schema do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
          {:ok, view_enum} <- Validation.validate_schema_view(view),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
@@ -85,7 +85,7 @@ defmodule PubsubGrpc.Schema do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -117,7 +117,7 @@ defmodule PubsubGrpc.Schema do
   defp do_delete_schema(project_id, schema_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
@@ -140,7 +140,7 @@ defmodule PubsubGrpc.Schema do
   defp do_validate_schema(project_id, type, definition) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -177,7 +177,7 @@ defmodule PubsubGrpc.Schema do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
          {:ok, view_enum} <- Validation.validate_schema_view(view),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       schema_path = schema_path(project_id, schema_id)
 
       fn channel ->
@@ -217,7 +217,7 @@ defmodule PubsubGrpc.Schema do
   defp do_validate_message(project_id, schema_name, message, encoding) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       project_path = "projects/#{project_id}"
 
       # If schema_name doesn't contain a slash, treat it as a schema ID
@@ -273,7 +273,7 @@ defmodule PubsubGrpc.Schema do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
          {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -297,15 +297,6 @@ defmodule PubsubGrpc.Schema do
   end
 
   # Private helpers
-
-  defp grpc_opts(opts \\ []) do
-    timeout = opts[:timeout] || Application.get_env(:pubsub_grpc, :default_timeout, 30_000)
-
-    case PubsubGrpc.Auth.request_opts() do
-      {:ok, auth_opts} -> {:ok, auth_opts ++ [timeout: timeout]}
-      {:error, _} = error -> error
-    end
-  end
 
   defp schema_path(project_id, schema_id) do
     "projects/#{project_id}/schemas/#{schema_id}"

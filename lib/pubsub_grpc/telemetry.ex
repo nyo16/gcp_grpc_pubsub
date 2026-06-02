@@ -38,8 +38,10 @@ defmodule PubsubGrpc.Telemetry do
 
   ## Auth events
 
-  Token fetches emit `[:pubsub_grpc, :auth, _]` events with the same three suffixes.
-  Stop metadata includes `:source` (`:cache | :goth | :gcloud`) when available.
+  Token retrievals emit `[:pubsub_grpc, :auth, _]` events with the same three
+  suffixes. Both start and stop metadata carry `:source`
+  (`:cache` for a cache hit, `:goth` or `:gcloud` for a fetch). Stop metadata
+  additionally includes `:result` (`:ok` or `{:error, error_code}`).
   """
 
   @event_prefix [:pubsub_grpc, :request]
@@ -59,8 +61,7 @@ defmodule PubsubGrpc.Telemetry do
   def auth_span(metadata, fun) when is_map(metadata) do
     :telemetry.span(@auth_event_prefix, metadata, fn ->
       result = fun.()
-      stop_meta = Map.merge(metadata, %{result: classify(result), source: auth_source(result)})
-      {result, stop_meta}
+      {result, Map.put(metadata, :result, classify(result))}
     end)
   end
 
@@ -69,7 +70,4 @@ defmodule PubsubGrpc.Telemetry do
   defp classify({:error, %PubsubGrpc.Error{code: code}}), do: {:error, code}
   defp classify({:error, _}), do: {:error, :unknown}
   defp classify(_), do: :unknown
-
-  defp auth_source({:ok, _}), do: :network
-  defp auth_source(_), do: :unknown
 end

@@ -24,22 +24,12 @@ defmodule PubsubGrpc.Auth do
 
   require Logger
 
-  alias PubsubGrpc.Error
+  alias PubsubGrpc.{Error, Telemetry}
 
   @cache_table :pubsub_grpc_auth_cache
   @cache_key :token
   # Cache gcloud CLI tokens for 50 minutes (tokens expire in 60 min)
   @cli_token_ttl_ms 50 * 60 * 1000
-
-  @doc false
-  @spec init_cache() :: :ok
-  def init_cache do
-    if :ets.whereis(@cache_table) == :undefined do
-      :ets.new(@cache_table, [:named_table, :public, :set])
-    end
-
-    :ok
-  end
 
   @doc """
   Clears the cached authentication token.
@@ -71,7 +61,7 @@ defmodule PubsubGrpc.Auth do
   def get_token do
     case get_cached_token() do
       {:ok, token} ->
-        {:ok, token}
+        Telemetry.auth_span(%{source: :cache}, fn -> {:ok, token} end)
 
       :miss ->
         fetch_and_cache_token()
@@ -106,6 +96,28 @@ defmodule PubsubGrpc.Auth do
     end
   end
 
+  @doc """
+  Builds the gRPC call options (auth metadata + timeout) for a request.
+
+  Combines `request_opts/0` with the `:timeout` option, falling back to the
+  configured `:default_timeout` (30s when unset). This is the single source of
+  truth for the options passed to every gRPC stub call.
+
+  ## Returns
+  - `{:ok, keyword()}` - Options to pass to gRPC stub functions
+  - `{:error, %PubsubGrpc.Error{}}` - Authentication failed
+
+  """
+  @spec grpc_opts(keyword()) :: {:ok, keyword()} | {:error, Error.t()}
+  def grpc_opts(opts \\ []) do
+    timeout = opts[:timeout] || Application.get_env(:pubsub_grpc, :default_timeout, 30_000)
+
+    case request_opts() do
+      {:ok, auth_opts} -> {:ok, auth_opts ++ [timeout: timeout]}
+      {:error, _} = error -> error
+    end
+  end
+
   # Private functions
 
   defp get_cached_token do
@@ -136,14 +148,8 @@ defmodule PubsubGrpc.Auth do
         goth_name -> {:goth, fn -> get_token_from_goth(goth_name) end}
       end
 
-    :telemetry.span([:pubsub_grpc, :auth], %{source: source}, fn ->
-      result = fun.()
-      {result, %{source: source, result: classify(result)}}
-    end)
+    Telemetry.auth_span(%{source: source}, fun)
   end
-
-  defp classify({:ok, _}), do: :ok
-  defp classify({:error, _}), do: :error
 
   defp get_token_from_goth(goth_name) do
     if Code.ensure_loaded?(Goth) do

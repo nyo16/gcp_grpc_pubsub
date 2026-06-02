@@ -87,7 +87,7 @@ defmodule PubsubGrpc do
   defp do_create_topic(project_id, topic_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       topic_path = topic_path(project_id, topic_id)
 
       fn channel ->
@@ -118,7 +118,7 @@ defmodule PubsubGrpc do
   defp do_get_topic(project_id, topic_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       topic_path = topic_path(project_id, topic_id)
 
       fn channel ->
@@ -148,7 +148,7 @@ defmodule PubsubGrpc do
   defp do_delete_topic(project_id, topic_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       topic_path = topic_path(project_id, topic_id)
 
       fn channel ->
@@ -181,7 +181,7 @@ defmodule PubsubGrpc do
 
   defp do_list_topics(project_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -235,7 +235,7 @@ defmodule PubsubGrpc do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
          {:ok, _} <- Validation.validate_messages(messages),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       topic_path = topic_path(project_id, topic_id)
 
       pubsub_messages =
@@ -301,7 +301,7 @@ defmodule PubsubGrpc do
          {:ok, _} <- Validation.validate_topic_id(topic_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
          {:ok, _} <- Validation.validate_ack_deadline(ack_deadline),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       topic_path = topic_path(project_id, topic_id)
       subscription_path = subscription_path(project_id, subscription_id)
 
@@ -340,7 +340,7 @@ defmodule PubsubGrpc do
   defp do_get_subscription(project_id, subscription_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       subscription_path = subscription_path(project_id, subscription_id)
 
       fn channel ->
@@ -371,7 +371,7 @@ defmodule PubsubGrpc do
   defp do_delete_subscription(project_id, subscription_id) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, grpc_opts} <- grpc_opts() do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts() do
       subscription_path = subscription_path(project_id, subscription_id)
 
       fn channel ->
@@ -404,7 +404,7 @@ defmodule PubsubGrpc do
 
   defp do_list_subscriptions(project_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       project_path = "projects/#{project_id}"
 
       fn channel ->
@@ -451,7 +451,7 @@ defmodule PubsubGrpc do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
          {:ok, _} <- Validation.validate_max_messages(max_messages),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       subscription_path = subscription_path(project_id, subscription_id)
 
       fn channel ->
@@ -500,7 +500,7 @@ defmodule PubsubGrpc do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
          {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       subscription_path = subscription_path(project_id, subscription_id)
 
       fn channel ->
@@ -560,7 +560,7 @@ defmodule PubsubGrpc do
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
          {:ok, _} <- Validation.validate_ack_ids(ack_ids),
          {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
+         {:ok, grpc_opts} <- PubsubGrpc.Auth.grpc_opts(opts) do
       subscription_path = subscription_path(project_id, subscription_id)
 
       fn channel ->
@@ -710,15 +710,6 @@ defmodule PubsubGrpc do
     to: Schema
 
   # Private helpers
-
-  defp grpc_opts(opts \\ []) do
-    timeout = opts[:timeout] || Application.get_env(:pubsub_grpc, :default_timeout, 30_000)
-
-    case PubsubGrpc.Auth.request_opts() do
-      {:ok, auth_opts} -> {:ok, auth_opts ++ [timeout: timeout]}
-      {:error, _} = error -> error
-    end
-  end
 
   defp topic_path(project_id, topic_id) do
     "projects/#{project_id}/topics/#{topic_id}"

@@ -19,21 +19,11 @@ defmodule PubsubGrpcConnectionTest do
     end
 
     test "can execute simple operation through pool" do
-      # Test a simple operation that doesn't require actual GRPC connection
-      simple_operation = fn _channel ->
-        {:ok, "test_result"}
-      end
+      # The pool is healthy (setup waits for it), so checkout succeeds and the
+      # operation's return value is wrapped in the outer {:ok, _} from execute/2.
+      simple_operation = fn _channel -> {:ok, "test_result"} end
 
-      # This should work even without a real GRPC connection if the pool is working
-      result =
-        case Client.execute(simple_operation) do
-          {:ok, {:ok, "test_result"}} -> :ok
-          {:error, _} -> :expected_error
-          other -> other
-        end
-
-      assert result in [:ok, :expected_error],
-             "Pool should be functional, got: #{inspect(result)}"
+      assert {:ok, {:ok, "test_result"}} = Client.execute(simple_operation)
     end
 
     test "connection pool handles multiple concurrent operations" do
@@ -51,68 +41,35 @@ defmodule PubsubGrpcConnectionTest do
 
       results = Enum.map(tasks, &Task.await/1)
 
-      # All tasks should complete (either successfully or with expected connection errors)
-      assert length(results) == 10
+      # Every operation should round-trip through the pool successfully and
+      # return the integer it was given, across all 10 concurrent tasks.
+      ids =
+        Enum.map(results, fn result ->
+          assert {:ok, {:ok, id}} = result
+          id
+        end)
 
-      # Check that we got results (could be success or connection errors)
-      Enum.each(results, fn result ->
-        case result do
-          {:ok, {:ok, id}} when is_integer(id) -> :ok
-          {:error, _} -> :expected_connection_error
-          # Some operations might return bare :ok
-          :ok -> :ok
-          other -> flunk("Unexpected result: #{inspect(other)}")
-        end
-      end)
+      assert Enum.sort(ids) == Enum.to_list(1..10)
     end
 
     test "connection pool survives and recovers from errors" do
-      # Operation that will cause an error inside the pool
-      error_operation = fn _channel ->
-        raise "Simulated error"
+      # execute/2 runs the operation on a checked-out channel without rescuing,
+      # so a raise inside the operation propagates to the caller.
+      assert_raise RuntimeError, "Simulated error", fn ->
+        Client.execute(fn _channel -> raise "Simulated error" end)
       end
 
-      # Client.execute wraps the call, so the raise propagates through
-      result =
-        try do
-          Client.execute(error_operation)
-          :no_raise
-        rescue
-          RuntimeError -> :raised
-        end
-
-      # Either raises through or pool returns error - both acceptable
-      assert result in [:raised, :no_raise]
-
-      # Pool should still be alive
+      # Pool should still be alive after an operation crashed.
       assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
 
-      # And should still be able to handle new operations
-      simple_operation = fn _channel ->
-        {:ok, "after_error"}
-      end
-
-      result2 =
-        case Client.execute(simple_operation) do
-          {:ok, {:ok, "after_error"}} -> :ok
-          {:error, _} -> :expected_connection_error
-        end
-
-      assert result2 in [:ok, :expected_connection_error]
+      # And should still handle new operations.
+      assert {:ok, {:ok, "after_error"}} =
+               Client.execute(fn _channel -> {:ok, "after_error"} end)
     end
 
     test "with_connection function works" do
-      result =
-        Client.with_connection(fn _conn ->
-          {:ok, "with_connection_works"}
-        end)
-
-      # Should either work or return a connection error
-      case result do
-        {:ok, {:ok, "with_connection_works"}} -> :ok
-        {:error, _} -> :expected_connection_error
-        other -> flunk("Unexpected result: #{inspect(other)}")
-      end
+      assert {:ok, {:ok, "with_connection_works"}} =
+               Client.with_connection(fn _conn -> {:ok, "with_connection_works"} end)
     end
 
     test "connection pool handles graceful disconnect without FunctionClauseError" do

@@ -3,8 +3,14 @@ defmodule PubsubGrpc.TelemetryTest do
 
   alias PubsubGrpc.Telemetry
 
+  # Named handler (captured with its module) avoids the :telemetry performance
+  # warning about local/anonymous handler functions. The test pid is threaded
+  # through the handler config rather than closed over.
+  def forward_event(event, measurements, metadata, %{pid: pid}) do
+    send(pid, {:telemetry, event, measurements, metadata})
+  end
+
   setup do
-    test_pid = self()
     handler_id = "test-handler-#{System.unique_integer([:positive])}"
 
     :telemetry.attach_many(
@@ -14,10 +20,8 @@ defmodule PubsubGrpc.TelemetryTest do
         [:pubsub_grpc, :request, :stop],
         [:pubsub_grpc, :request, :exception]
       ],
-      fn event, measurements, metadata, _config ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
+      &__MODULE__.forward_event/4,
+      %{pid: self()}
     )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
