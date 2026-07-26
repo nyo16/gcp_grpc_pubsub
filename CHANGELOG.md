@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-07-26
 
 ### Changed
+- **License changed from MIT to Apache-2.0.** The `LICENSE` file is now the full
+  Apache License 2.0 text and `mix.exs` declares `Apache-2.0`, matching the license of
+  the `grpc_connection_pool` and `grpc` dependencies. Releases up to and including 0.4.2
+  remain MIT-licensed; only 0.5.0 onward is Apache-2.0. Apache-2.0 is still permissive,
+  but it adds an explicit patent grant and requires that recipients be given a copy of
+  the license and notice of any modified files.
 - **Updated `grpc_connection_pool` from 0.3.0 to 0.5.1**, which moves the underlying
   `grpc` dependency to 1.0 (was 0.11.5). `protobuf` moves 0.16 → 0.17 and `gun` to 2.4.1.
   The `GrpcConnectionPool` API used by this library (`GrpcConnectionPool.get_channel/1`,

@@ -53,7 +53,7 @@ defmodule PubsubGrpc.MixProject do
     [
       description:
         "Efficient Google Cloud Pub/Sub client using gRPC with GrpcConnectionPool library",
-      licenses: ["MIT"],
+      licenses: ["Apache-2.0"],
       links: %{
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/master/CHANGELOG.md"
