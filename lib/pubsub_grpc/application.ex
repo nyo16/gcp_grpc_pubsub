@@ -90,7 +90,6 @@ defmodule PubsubGrpc.Application do
 
     children = [
       PubsubGrpc.Auth.Cache,
-      {GRPC.Client.Supervisor, []},
       {GrpcConnectionPool, config}
     ]
 

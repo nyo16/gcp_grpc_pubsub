@@ -1,7 +1,7 @@
 defmodule PubsubGrpc.MixProject do
   use Mix.Project
 
-  @version "0.4.2"
+  @version "0.5.0"
   @source_url "https://github.com/nyo16/gcp_grpc_pubsub"
 
   def project do
@@ -64,7 +64,7 @@ defmodule PubsubGrpc.MixProject do
 
   defp deps do
     [
-      {:grpc_connection_pool, "0.3.0"},
+      {:grpc_connection_pool, "~> 0.5.1"},
       {:telemetry, "~> 1.0"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},

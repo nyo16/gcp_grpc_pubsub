@@ -18,7 +18,7 @@ High-performance Google Cloud Pub/Sub client using gRPC with connection pooling.
 ```elixir
 def deps do
   [
-    {:pubsub_grpc, "~> 0.3.0"}
+    {:pubsub_grpc, "~> 0.5.0"}
   ]
 end
 ```

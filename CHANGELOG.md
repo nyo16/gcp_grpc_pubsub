@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-26
+
+### Changed
+- **Updated `grpc_connection_pool` from 0.3.0 to 0.5.1**, which moves the underlying
+  `grpc` dependency to 1.0 (was 0.11.5). `protobuf` moves 0.16 → 0.17 and `gun` to 2.4.1.
+  The `GrpcConnectionPool` API used by this library (`GrpcConnectionPool.get_channel/1`,
+  `GrpcConnectionPool.status/1`, `GrpcConnectionPool.stop/1`, and the `Config` builders
+  `new/1`, `from_env/1`, `local/1`, `production/1`) is unchanged.
+- The dependency requirement is now `~> 0.5.1` rather than an exact pin, so patch updates
+  no longer require a release here.
+
+### Fixed
+- **Removed `{GRPC.Client.Supervisor, []}` from the application supervision tree.**
+  grpc 1.0 deleted that module — the name is now just the registered name of a
+  `DynamicSupervisor` that grpc starts itself in GRPC.Client.Application. Keeping the
+  child spec crashes at boot with *"The module GRPC.Client.Supervisor was given as a child
+  to a supervisor but it does not exist"*. Nothing replaces it; no manual start is needed.
+
+### Upgrade notes
+- No changes are required in application code. If you added `{GRPC.Client.Supervisor, []}`
+  to your **own** supervision tree (pre-1.0 grpc's README recommended it), remove it — it
+  will crash at boot under grpc 1.0.
+- If you attached telemetry handlers to `[:grpc_connection_pool, :channel, :gun_down]` or
+  `[:grpc_connection_pool, :channel, :gun_error]`, switch to the adapter-agnostic
+  `[:grpc_connection_pool, :channel, :connection_down]` (metadata: `pool_name`, `reason`).
+  Those two events were removed upstream in `grpc_connection_pool` 0.5.0. This library's
+  own `[:pubsub_grpc, ...]` events are unaffected.
+
+## [0.4.2] - 2026-05-14
+
+### Changed
+- Version bump only (package metadata).
+
+## [0.4.1] - 2026-05-14
+
+### Added
+- Telemetry events for publish/pull/ack operations.
+
+### Fixed
+- Goth token expiry handling when `expires` is returned as an integer.
+- Credential-safety and silent-failure hardening across auth and client paths.
+
 ## [0.4.0] - 2026-03-24
 
 ### Breaking Changes
