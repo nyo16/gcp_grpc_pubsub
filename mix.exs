@@ -21,7 +21,32 @@ defmodule PubsubGrpc.MixProject do
       docs: [
         main: "PubsubGrpc",
         extras: ["README.md", "CHANGELOG.md"],
-        source_ref: "v#{@version}"
+        source_ref: "v#{@version}",
+        # The generated `Google.Pubsub.V1.*` protobuf modules and the internal
+        # `PubsubGrpc.Validation` are all `@moduledoc false`, so ExDoc has nothing to link
+        # to. They still belong in the typespecs and CHANGELOG as plain code text, so skip
+        # autolinking to them rather than publishing dozens of generated protobuf modules
+        # just to satisfy the linker. This suppresses the dead links in prose.
+        skip_code_autolink_to: fn ref ->
+          String.starts_with?(ref, "Google.Pubsub.V1.") or
+            String.starts_with?(ref, "PubsubGrpc.Validation")
+        end,
+        # Warnings for hidden references in *typespecs* are gated separately, and ExDoc
+        # matches them on the location of the reference rather than its target — so the
+        # functions whose specs return the generated protobuf structs have to be listed
+        # explicitly. Kept at function granularity (not whole files) so a genuine typo
+        # elsewhere in these modules still warns.
+        skip_undefined_reference_warnings_on: [
+          "PubsubGrpc.create_topic/2",
+          "PubsubGrpc.get_topic/2",
+          "PubsubGrpc.create_subscription/4",
+          "PubsubGrpc.get_subscription/2",
+          "PubsubGrpc.Schema.create_schema/4",
+          "PubsubGrpc.Schema.get_schema/3",
+          "PubsubGrpc.Schema.validate_schema/3",
+          "PubsubGrpc.Schema.validate_message/4",
+          "PubsubGrpc.Schema.validate_message_with_schema/5"
+        ]
       ],
       package: package()
     ]

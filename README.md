@@ -426,9 +426,9 @@ docker-compose down
 - Use Ctrl+C to stop
 - Or `docker stop <container_id>`
 
-### Configuration
+### Viewing Logs
 
-# Check logs
+```bash
 docker-compose logs -f pubsub-emulator
 ```
 
@@ -442,7 +442,7 @@ docker-compose logs -f pubsub-emulator
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](https://github.com/nyo16/gcp_grpc_pubsub/blob/master/LICENSE).
 
 ## Links
 

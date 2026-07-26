@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`mix docs` is warning-free again** (was 21 warnings, all pre-existing before 0.5.0):
+  - **README:** restored the `### Viewing Logs` section. A past README compaction deleted
+    its heading and opening ```` ```bash ```` fence but left the closing fence, so
+    everything after it was swallowed into an unterminated code block. The orphaned
+    `### Configuration` heading it left behind — a duplicate of the real `## Configuration`
+    section — is gone too.
+  - **ExDoc config:** the generated `Google.Pubsub.V1.*` protobuf modules and the internal
+    `PubsubGrpc.Validation` are `@moduledoc false`, so ExDoc had nothing to link to and
+    warned on every reference from a typespec or the CHANGELOG. Added
+    `skip_code_autolink_to` for the prose references and `skip_undefined_reference_warnings_on`
+    for the typespec ones. The latter is listed per-function rather than per-file, so a real
+    broken reference elsewhere in those modules still warns.
+  - The README license link is now absolute, so it resolves on hexdocs as well as GitHub.
+
 ## [0.5.0] - 2026-07-26
 
 ### Changed
