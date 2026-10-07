@@ -39,8 +39,8 @@ defmodule Mix.Tasks.Emulator.Start do
       "--name",
       "pubsub-emulator",
       "-p",
-      "8085:8085",
-      "google/cloud-sdk:emulators",
+      "127.0.0.1:8085:8085",
+      "google/cloud-sdk:489.0.0-emulators",
       "/bin/bash",
       "-c",
       "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"

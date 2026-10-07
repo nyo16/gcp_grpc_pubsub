@@ -23,6 +23,10 @@ def deps do
 end
 ```
 
+**Requirements:** Elixir ≥ 1.18 and Erlang/OTP ≥ 27. Elixir 1.18 itself supports OTP 25, but
+the dependency tree does not build there: cowlib 2.20 uses OTP 27's `maybe` expression, and
+jose 1.11.12 (pulled in by the optional `goth`) needs OTP 26+.
+
 ## Quick Start
 
 ### Authentication
@@ -224,8 +228,16 @@ PubsubGrpc.publish(project_id, topic_id, messages)
 # Check pool health
 GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
 
-# Get a channel directly (advanced)
-{:ok, channel} = GrpcConnectionPool.get_channel(PubsubGrpc.ConnectionPool)
+# Custom gRPC call on a pooled channel (advanced): errors are normalized to
+# %PubsubGrpc.Error{}, and the auth token is attached only over TLS
+alias PubsubGrpc.Proto.Google.Pubsub.V1
+
+{:ok, topic} =
+  PubsubGrpc.execute(fn channel ->
+    {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
+    request = %V1.GetTopicRequest{topic: "projects/#{project_id}/topics/#{topic_id}"}
+    V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+  end)
 ```
 
 ## Testing
@@ -259,8 +271,7 @@ config :pubsub_grpc, GrpcConnectionPool,
   endpoint: [
     type: :production,
     host: "pubsub.googleapis.com",
-    port: 443,
-    ssl: []
+    port: 443
   ],
   pool: [
     size: 10,
@@ -270,6 +281,42 @@ config :pubsub_grpc, GrpcConnectionPool,
     keepalive: 30_000,
     ping_interval: 25_000
   ]
+```
+
+Production endpoints use verified TLS by default (system CA store, peer and hostname
+verification), so no `ssl:` key is needed. To customise TLS, set options that are merged
+over those defaults:
+
+```elixir
+config :pubsub_grpc, :ssl_opts, versions: [:"tlsv1.3"]
+```
+
+### Supervising the Pool Yourself
+
+By default the `:pubsub_grpc` application starts the connection pool. To start it in your
+own supervision tree instead (e.g. to control start order), disable the built-in pool and
+add `PubsubGrpc` as a child (see `PubsubGrpc.child_spec/1`). It reads the same pool
+configuration as the built-in one:
+
+```elixir
+# config/config.exs
+config :pubsub_grpc, :start_pool, false
+
+# MyApp.Application
+children = [
+  PubsubGrpc,
+  # ... processes that use PubsubGrpc
+]
+```
+
+### Auth Timeout
+
+A token fetch (Goth or gcloud CLI) that takes longer than `:auth_timeout` milliseconds
+(default `10_000`) is aborted and callers get
+`{:error, %PubsubGrpc.Error{code: :deadline_exceeded}}`:
+
+```elixir
+config :pubsub_grpc, :auth_timeout, 5_000
 ```
 
 ### Using Goth for Authentication
@@ -324,6 +371,11 @@ mix test --include integration
 
 This project includes multiple ways to run a local Google Cloud Pub/Sub emulator for development and testing.
 
+The `mix emulator.*` tasks live in `dev/mix/tasks/` and are compiled only in the `:dev` and
+`:test` environments of a checkout of this repository. They are not part of the Hex
+package, so projects that depend on `pubsub_grpc` should use Docker Compose or the Docker
+command below.
+
 ### Quick Start
 
 #### Using Mix Commands (Recommended)
@@ -359,14 +411,15 @@ docker-compose down
 
 ```bash
 # Start the emulator
-docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 
 # Stop with Ctrl+C or docker stop
 ```
 
-### Mix Commands
+### Mix Commands (repository checkout only)
 
-The project provides convenient Mix tasks for emulator management:
+A checkout of this repository provides Mix tasks for emulator management
+(`dev/mix/tasks/`, not shipped in the Hex package):
 
 #### `mix emulator.start`
 - Starts the Google Cloud Pub/Sub emulator in a Docker container
@@ -405,7 +458,7 @@ docker-compose up -d
 
 #### Method 3: Direct Docker Command
 ```bash
-docker run --rm -p 8085:8085 google/cloud-sdk:emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 ```
 
 All methods start the emulator at `localhost:8085` with project ID `test-project-id`.
@@ -426,9 +479,9 @@ docker-compose down
 - Use Ctrl+C to stop
 - Or `docker stop <container_id>`
 
-### Configuration
+### Viewing Logs
 
-# Check logs
+```bash
 docker-compose logs -f pubsub-emulator
 ```
 

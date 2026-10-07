@@ -28,6 +28,51 @@ defmodule PubsubGrpc do
       # Global default (30s by default)
       config :pubsub_grpc, :default_timeout, 30_000
 
+  ### Supervising the connection pool yourself
+
+  By default the `:pubsub_grpc` application starts the connection pool. To start
+  it in your own supervision tree instead (for example to control start order),
+  disable the built-in pool and add `PubsubGrpc` as a child:
+
+      # config/config.exs
+      config :pubsub_grpc, :start_pool, false
+
+      # MyApp.Application
+      children = [
+        PubsubGrpc,
+        # ... processes that use PubsubGrpc
+      ]
+
+  The pool is configured from the same application env as the built-in one (see
+  `PubsubGrpc.Application`). See `child_spec/1`.
+
+  ## Common options
+
+  Every operation takes a trailing keyword list `opts` that accepts:
+
+    * `:timeout` - deadline for the gRPC call itself, in milliseconds (default:
+      the `:default_timeout` app env, 30_000). Waits before the call are not
+      included and come on top of it: up to `min(timeout, 2_000)` for a pool
+      connection when none is ready, and up to `:auth_timeout` (10 s by
+      default) for a token fetch on a cache miss.
+    * `:pool` - name of the connection pool to use (default: the configured pool,
+      `PubsubGrpc.ConnectionPool` unless set in `config :pubsub_grpc, GrpcConnectionPool`).
+      The auth token is attached only if the checked-out connection uses TLS, so
+      any TLS pool passed as `:pool` receives the bearer token: only point it at
+      trusted Google endpoints.
+
+  Operations with their own options (e.g. `list_topics/2`, `pull/4`) accept the
+  common options in the same keyword list.
+
+  ## Request limits
+
+  Requests that are certain to exceed a Pub/Sub limit are rejected locally with
+  `{:error, %PubsubGrpc.Error{code: :validation_error}}` and a message naming the
+  limit: at most 1,000 messages and 10 MiB of message data and attribute keys and
+  values per `publish/4`, and 512 KiB of ack IDs per `acknowledge/4`,
+  `modify_ack_deadline/5` and `nack/4`
+  ([Pub/Sub quotas](https://cloud.google.com/pubsub/quotas#resource_limits)).
+
   ## Error Handling
 
   All functions return `{:ok, result}` or `{:error, %PubsubGrpc.Error{}}`.
@@ -57,9 +102,52 @@ defmodule PubsubGrpc do
       ack_ids = Enum.map(messages, & &1.ack_id)
       :ok = PubsubGrpc.acknowledge("my-project", "my-sub", ack_ids)
 
+      # Per-call timeout
+      {:ok, topic} = PubsubGrpc.get_topic("my-project", "my-topic", timeout: 5_000)
+
   """
 
-  alias PubsubGrpc.{Client, Error, Result, Schema, Telemetry, Validation}
+  alias PubsubGrpc.{Client, Config, Error, Request, Result, Schema, Telemetry, Validation}
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
+  alias PubsubV1.Publisher.Stub, as: PublisherStub
+  alias PubsubV1.Subscriber.Stub, as: SubscriberStub
+
+  @typedoc "A Pub/Sub topic (`%PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}`)."
+  @type topic :: %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}
+
+  @typedoc "A Pub/Sub subscription (`%PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}`)."
+  @type subscription :: %PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}
+
+  @typedoc "A gRPC channel checked out from the pool (`%GRPC.Channel{}`), as passed to `execute/2` callbacks."
+  @type channel :: %GRPC.Channel{}
+
+  @typedoc "A Pub/Sub schema (`%PubsubGrpc.Proto.Google.Pubsub.V1.Schema{}`)."
+  @type schema :: %PubsubGrpc.Proto.Google.Pubsub.V1.Schema{}
+
+  @typedoc "Response of `validate_schema/4` (`%PubsubGrpc.Proto.Google.Pubsub.V1.ValidateSchemaResponse{}`)."
+  @type validate_schema_response :: %PubsubGrpc.Proto.Google.Pubsub.V1.ValidateSchemaResponse{}
+
+  @typedoc "Response of `validate_message/5` and `validate_message_with_schema/6` (`%PubsubGrpc.Proto.Google.Pubsub.V1.ValidateMessageResponse{}`)."
+  @type validate_message_response :: %PubsubGrpc.Proto.Google.Pubsub.V1.ValidateMessageResponse{}
+
+  @typedoc "A schema type: Protocol Buffer or Avro."
+  @type schema_type :: :protocol_buffer | :avro
+
+  @typedoc "A message encoding for schema validation."
+  @type encoding :: :json | :binary
+
+  @doc """
+  Child spec for the Pub/Sub connection pool, configured from the `:pubsub_grpc`
+  application env exactly like the pool the application starts by default.
+
+  Use it with `config :pubsub_grpc, :start_pool, false`; otherwise the pool is
+  already running and starting a second one fails. Takes no options:
+  `PubsubGrpc` and `{PubsubGrpc, []}` are equivalent.
+  """
+  @spec child_spec([]) :: Supervisor.child_spec()
+  def child_spec([]) do
+    Supervisor.child_spec({GrpcConnectionPool, Config.pool_config()}, id: __MODULE__)
+  end
 
   # Topics
 
@@ -69,32 +157,29 @@ defmodule PubsubGrpc do
   ## Parameters
   - `project_id` - Google Cloud project ID
   - `topic_id` - Topic identifier (without full path)
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Topic{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :already_exists}}` if topic exists
   - `{:error, %PubsubGrpc.Error{}}` on other errors
 
   """
-  @spec create_topic(String.t(), String.t()) ::
-          {:ok, Google.Pubsub.V1.Topic.t()} | {:error, Error.t()}
-  def create_topic(project_id, topic_id) do
+  @spec create_topic(String.t(), String.t(), keyword()) ::
+          {:ok, topic()} | {:error, Error.t()}
+  def create_topic(project_id, topic_id, opts \\ []) do
     Telemetry.span(:create_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      do_create_topic(project_id, topic_id)
+      do_create_topic(project_id, topic_id, opts)
     end)
   end
 
-  defp do_create_topic(project_id, topic_id) do
+  defp do_create_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
-      topic_path = topic_path(project_id, topic_id)
+         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+      request = %PubsubV1.Topic{name: Request.topic_path(project_id, topic_id)}
 
-      fn channel ->
-        request = %Google.Pubsub.V1.Topic{name: topic_path}
-        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> PublisherStub.create_topic(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap()
     end
   end
@@ -102,30 +187,28 @@ defmodule PubsubGrpc do
   @doc """
   Gets details of a topic.
 
+  Accepts the [common options](#module-common-options).
+
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Topic{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :not_found}}` if topic doesn't exist
 
   """
-  @spec get_topic(String.t(), String.t()) ::
-          {:ok, Google.Pubsub.V1.Topic.t()} | {:error, Error.t()}
-  def get_topic(project_id, topic_id) do
+  @spec get_topic(String.t(), String.t(), keyword()) ::
+          {:ok, topic()} | {:error, Error.t()}
+  def get_topic(project_id, topic_id, opts \\ []) do
     Telemetry.span(:get_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      do_get_topic(project_id, topic_id)
+      do_get_topic(project_id, topic_id, opts)
     end)
   end
 
-  defp do_get_topic(project_id, topic_id) do
+  defp do_get_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
-      topic_path = topic_path(project_id, topic_id)
+         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+      request = %PubsubV1.GetTopicRequest{topic: Request.topic_path(project_id, topic_id)}
 
-      fn channel ->
-        request = %Google.Pubsub.V1.GetTopicRequest{topic: topic_path}
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> PublisherStub.get_topic(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap()
     end
   end
@@ -133,29 +216,27 @@ defmodule PubsubGrpc do
   @doc """
   Deletes a Pub/Sub topic.
 
+  Accepts the [common options](#module-common-options).
+
   ## Returns
   - `:ok` on success
   - `{:error, %PubsubGrpc.Error{}}` on error
 
   """
-  @spec delete_topic(String.t(), String.t()) :: :ok | {:error, Error.t()}
-  def delete_topic(project_id, topic_id) do
+  @spec delete_topic(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
+  def delete_topic(project_id, topic_id, opts \\ []) do
     Telemetry.span(:delete_topic, %{project_id: project_id, topic_id: topic_id}, fn ->
-      do_delete_topic(project_id, topic_id)
+      do_delete_topic(project_id, topic_id, opts)
     end)
   end
 
-  defp do_delete_topic(project_id, topic_id) do
+  defp do_delete_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, grpc_opts} <- grpc_opts() do
-      topic_path = topic_path(project_id, topic_id)
+         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+      request = %PubsubV1.DeleteTopicRequest{topic: Request.topic_path(project_id, topic_id)}
 
-      fn channel ->
-        request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
-        Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> PublisherStub.delete_topic(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_empty()
     end
   end
@@ -166,6 +247,7 @@ defmodule PubsubGrpc do
   ## Options
   - `:page_size` - Maximum number of topics to return
   - `:page_token` - Token for pagination
+  - [common options](#module-common-options)
 
   ## Returns
   - `{:ok, %{topics: [topic], next_page_token: token}}`
@@ -180,20 +262,15 @@ defmodule PubsubGrpc do
   end
 
   defp do_list_topics(project_id, opts) do
-    with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      project_path = "projects/#{project_id}"
+    with {:ok, _} <- Validation.validate_project_id(project_id) do
+      request = %PubsubV1.ListTopicsRequest{
+        project: Request.project_path(project_id),
+        page_size: Keyword.get(opts, :page_size, 0),
+        page_token: Keyword.get(opts, :page_token, "")
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.ListTopicsRequest{
-          project: project_path,
-          page_size: Keyword.get(opts, :page_size, 0),
-          page_token: Keyword.get(opts, :page_token, "")
-        }
-
-        Google.Pubsub.V1.Publisher.Stub.list_topics(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> PublisherStub.list_topics(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_list(:topics, :next_page_token)
     end
   end
@@ -205,7 +282,9 @@ defmodule PubsubGrpc do
 
   ## Parameters
   - `messages` - Non-empty list of message maps, each with `:data` (binary)
-    and/or `:attributes` (map)
+    and/or `:attributes` (map). At most 1,000 messages and 10 MiB of data and
+    attributes (see [Request limits](#module-request-limits)).
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
   - `{:ok, %{message_ids: [String.t()]}}`
@@ -222,39 +301,35 @@ defmodule PubsubGrpc do
   @spec publish(String.t(), String.t(), [map()], keyword()) ::
           {:ok, %{message_ids: [String.t()]}} | {:error, Error.t()}
   def publish(project_id, topic_id, messages, opts \\ []) do
-    message_count = if is_list(messages), do: length(messages), else: 0
+    # Validates and builds the request messages in one pass, before the span, so
+    # the span metadata can carry the message count.
+    prepared = Validation.build_publish_messages(messages)
+
+    message_count =
+      case prepared do
+        {:ok, _messages, count} -> count
+        {:error, _} when is_list(messages) -> length(messages)
+        {:error, _} -> 0
+      end
 
     Telemetry.span(
       :publish,
       %{project_id: project_id, topic_id: topic_id, message_count: message_count},
-      fn -> do_publish(project_id, topic_id, messages, opts) end
+      fn -> do_publish(project_id, topic_id, prepared, opts) end
     )
   end
 
-  defp do_publish(project_id, topic_id, messages, opts) do
+  defp do_publish(project_id, topic_id, prepared, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, _} <- Validation.validate_messages(messages),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      topic_path = topic_path(project_id, topic_id)
+         {:ok, pubsub_messages, _count} <- prepared do
+      request = %PubsubV1.PublishRequest{
+        topic: Request.topic_path(project_id, topic_id),
+        messages: pubsub_messages
+      }
 
-      pubsub_messages =
-        Enum.map(messages, fn msg ->
-          %Google.Pubsub.V1.PubsubMessage{
-            data: Map.get(msg, :data, ""),
-            attributes: Map.get(msg, :attributes, %{})
-          }
-        end)
-
-      fn channel ->
-        request = %Google.Pubsub.V1.PublishRequest{
-          topic: topic_path,
-          messages: pubsub_messages
-        }
-
-        Google.Pubsub.V1.Publisher.Stub.publish(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> PublisherStub.publish(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> case do
         {:ok, {:ok, response}} -> {:ok, %{message_ids: response.message_ids}}
         other -> Result.unwrap_error(other)
@@ -264,11 +339,32 @@ defmodule PubsubGrpc do
 
   @doc """
   Convenience function to publish a single message.
+
+  `opts` are the [common options](#module-common-options). Without attributes,
+  they can be passed in place of `attributes`:
+  `publish_message(project_id, topic_id, data, timeout: 5_000)`. A list in that
+  position is taken as options only if it is a keyword list of common options
+  (`:timeout`, `:pool`); any other list is validated as attributes (and rejected,
+  since attributes must be a map).
   """
-  @spec publish_message(String.t(), String.t(), binary(), map()) ::
+  @spec publish_message(String.t(), String.t(), binary(), map() | keyword(), keyword()) ::
           {:ok, %{message_ids: [String.t()]}} | {:error, Error.t()}
-  def publish_message(project_id, topic_id, data, attributes \\ %{}) do
-    publish(project_id, topic_id, [%{data: data, attributes: attributes}])
+  def publish_message(project_id, topic_id, data, attributes \\ %{}, opts \\ [])
+
+  def publish_message(project_id, topic_id, data, [_ | _] = maybe_opts, []) do
+    if common_opts?(maybe_opts),
+      do: publish_message(project_id, topic_id, data, %{}, maybe_opts),
+      else: publish(project_id, topic_id, [%{data: data, attributes: maybe_opts}], [])
+  end
+
+  def publish_message(project_id, topic_id, data, attributes, opts) do
+    publish(project_id, topic_id, [%{data: data, attributes: attributes}], opts)
+  end
+
+  @common_opts [:timeout, :pool]
+
+  defp common_opts?(list) do
+    Keyword.keyword?(list) and Enum.all?(list, fn {key, _} -> key in @common_opts end)
   end
 
   # Subscriptions
@@ -278,10 +374,11 @@ defmodule PubsubGrpc do
 
   ## Options
   - `:ack_deadline_seconds` - Ack deadline in seconds (10-600, default: 60)
+  - [common options](#module-common-options)
 
   """
   @spec create_subscription(String.t(), String.t(), String.t(), keyword()) ::
-          {:ok, Google.Pubsub.V1.Subscription.t()} | {:error, Error.t()}
+          {:ok, subscription()} | {:error, Error.t()}
   def create_subscription(project_id, topic_id, subscription_id, opts \\ []) do
     Telemetry.span(
       :create_subscription,
@@ -300,21 +397,15 @@ defmodule PubsubGrpc do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_ack_deadline(ack_deadline),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      topic_path = topic_path(project_id, topic_id)
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_ack_deadline(ack_deadline) do
+      request = %PubsubV1.Subscription{
+        name: Request.subscription_path(project_id, subscription_id),
+        topic: Request.topic_path(project_id, topic_id),
+        ack_deadline_seconds: ack_deadline
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.Subscription{
-          name: subscription_path,
-          topic: topic_path,
-          ack_deadline_seconds: ack_deadline
-        }
-
-        Google.Pubsub.V1.Subscriber.Stub.create_subscription(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.create_subscription(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap()
     end
   end
@@ -322,32 +413,32 @@ defmodule PubsubGrpc do
   @doc """
   Gets details of a subscription.
 
+  Accepts the [common options](#module-common-options).
+
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Subscription{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :not_found}}` if subscription doesn't exist
 
   """
-  @spec get_subscription(String.t(), String.t()) ::
-          {:ok, Google.Pubsub.V1.Subscription.t()} | {:error, Error.t()}
-  def get_subscription(project_id, subscription_id) do
+  @spec get_subscription(String.t(), String.t(), keyword()) ::
+          {:ok, subscription()} | {:error, Error.t()}
+  def get_subscription(project_id, subscription_id, opts \\ []) do
     Telemetry.span(
       :get_subscription,
       %{project_id: project_id, subscription_id: subscription_id},
-      fn -> do_get_subscription(project_id, subscription_id) end
+      fn -> do_get_subscription(project_id, subscription_id, opts) end
     )
   end
 
-  defp do_get_subscription(project_id, subscription_id) do
+  defp do_get_subscription(project_id, subscription_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, grpc_opts} <- grpc_opts() do
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id) do
+      request = %PubsubV1.GetSubscriptionRequest{
+        subscription: Request.subscription_path(project_id, subscription_id)
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.GetSubscriptionRequest{subscription: subscription_path}
-        Google.Pubsub.V1.Subscriber.Stub.get_subscription(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.get_subscription(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap()
     end
   end
@@ -355,30 +446,30 @@ defmodule PubsubGrpc do
   @doc """
   Deletes a subscription.
 
+  Accepts the [common options](#module-common-options).
+
   ## Returns
   - `:ok` on success
 
   """
-  @spec delete_subscription(String.t(), String.t()) :: :ok | {:error, Error.t()}
-  def delete_subscription(project_id, subscription_id) do
+  @spec delete_subscription(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
+  def delete_subscription(project_id, subscription_id, opts \\ []) do
     Telemetry.span(
       :delete_subscription,
       %{project_id: project_id, subscription_id: subscription_id},
-      fn -> do_delete_subscription(project_id, subscription_id) end
+      fn -> do_delete_subscription(project_id, subscription_id, opts) end
     )
   end
 
-  defp do_delete_subscription(project_id, subscription_id) do
+  defp do_delete_subscription(project_id, subscription_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, grpc_opts} <- grpc_opts() do
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id) do
+      request = %PubsubV1.DeleteSubscriptionRequest{
+        subscription: Request.subscription_path(project_id, subscription_id)
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
-        Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.delete_subscription(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_empty()
     end
   end
@@ -389,6 +480,7 @@ defmodule PubsubGrpc do
   ## Options
   - `:page_size` - Maximum number of subscriptions to return
   - `:page_token` - Token for pagination
+  - [common options](#module-common-options)
 
   ## Returns
   - `{:ok, %{subscriptions: [subscription], next_page_token: token}}`
@@ -403,20 +495,15 @@ defmodule PubsubGrpc do
   end
 
   defp do_list_subscriptions(project_id, opts) do
-    with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      project_path = "projects/#{project_id}"
+    with {:ok, _} <- Validation.validate_project_id(project_id) do
+      request = %PubsubV1.ListSubscriptionsRequest{
+        project: Request.project_path(project_id),
+        page_size: Keyword.get(opts, :page_size, 0),
+        page_token: Keyword.get(opts, :page_token, "")
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.ListSubscriptionsRequest{
-          project: project_path,
-          page_size: Keyword.get(opts, :page_size, 0),
-          page_token: Keyword.get(opts, :page_token, "")
-        }
-
-        Google.Pubsub.V1.Subscriber.Stub.list_subscriptions(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.list_subscriptions(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_list(:subscriptions, :next_page_token)
     end
   end
@@ -427,10 +514,12 @@ defmodule PubsubGrpc do
   Pulls messages from a subscription.
 
   ## Parameters
-  - `max_messages` - Maximum number of messages to pull (default: 10, must be positive)
+  - `max_messages` - Maximum number of messages to pull (default: 10, must be
+    positive). Pub/Sub returns at most 1,000 messages per pull.
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
-  - `{:ok, [%Google.Pubsub.V1.ReceivedMessage{}]}`
+  - `{:ok, [%PubsubGrpc.Proto.Google.Pubsub.V1.ReceivedMessage{}]}`
 
   """
   @spec pull(String.t(), String.t(), pos_integer(), keyword()) ::
@@ -450,19 +539,14 @@ defmodule PubsubGrpc do
   defp do_pull(project_id, subscription_id, max_messages, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_max_messages(max_messages),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_max_messages(max_messages) do
+      request = %PubsubV1.PullRequest{
+        subscription: Request.subscription_path(project_id, subscription_id),
+        max_messages: max_messages
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.PullRequest{
-          subscription: subscription_path,
-          max_messages: max_messages
-        }
-
-        Google.Pubsub.V1.Subscriber.Stub.pull(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.pull(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> case do
         {:ok, {:ok, response}} -> {:ok, response.received_messages}
         other -> Result.unwrap_error(other)
@@ -474,7 +558,9 @@ defmodule PubsubGrpc do
   Acknowledges received messages.
 
   ## Parameters
-  - `ack_ids` - Non-empty list of acknowledgment IDs from received messages
+  - `ack_ids` - Non-empty list of acknowledgment IDs from received messages, at
+    most 512 KiB in total (see [Request limits](#module-request-limits))
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
   - `:ok` on success
@@ -499,19 +585,14 @@ defmodule PubsubGrpc do
   defp do_acknowledge(project_id, subscription_id, ack_ids, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_ack_ids(ack_ids) do
+      request = %PubsubV1.AcknowledgeRequest{
+        subscription: Request.subscription_path(project_id, subscription_id),
+        ack_ids: ack_ids
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.AcknowledgeRequest{
-          subscription: subscription_path,
-          ack_ids: ack_ids
-        }
-
-        Google.Pubsub.V1.Subscriber.Stub.acknowledge(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.acknowledge(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_empty()
     end
   end
@@ -523,8 +604,9 @@ defmodule PubsubGrpc do
   Use `nack/3` as a convenience for this.
 
   ## Parameters
-  - `ack_ids` - Non-empty list of acknowledgment IDs
+  - `ack_ids` - Non-empty list of acknowledgment IDs, at most 512 KiB in total
   - `ack_deadline_seconds` - New deadline in seconds (0-600)
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
   - `:ok` on success
@@ -559,20 +641,15 @@ defmodule PubsubGrpc do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
          {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-         {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds),
-         {:ok, grpc_opts} <- grpc_opts(opts) do
-      subscription_path = subscription_path(project_id, subscription_id)
+         {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds) do
+      request = %PubsubV1.ModifyAckDeadlineRequest{
+        subscription: Request.subscription_path(project_id, subscription_id),
+        ack_ids: ack_ids,
+        ack_deadline_seconds: ack_deadline_seconds
+      }
 
-      fn channel ->
-        request = %Google.Pubsub.V1.ModifyAckDeadlineRequest{
-          subscription: subscription_path,
-          ack_ids: ack_ids,
-          ack_deadline_seconds: ack_deadline_seconds
-        }
-
-        Google.Pubsub.V1.Subscriber.Stub.modify_ack_deadline(channel, request, grpc_opts)
-      end
-      |> Client.execute()
+      fn channel, grpc_opts -> SubscriberStub.modify_ack_deadline(channel, request, grpc_opts) end
+      |> Request.execute(opts)
       |> Result.unwrap_empty()
     end
   end
@@ -580,10 +657,11 @@ defmodule PubsubGrpc do
   @doc """
   Negatively acknowledges messages, causing immediate redelivery.
 
-  This is a convenience wrapper around `modify_ack_deadline/4` with a deadline of 0.
+  This is a convenience wrapper around `modify_ack_deadline/5` with a deadline of 0.
 
   ## Parameters
   - `ack_ids` - Non-empty list of acknowledgment IDs
+  - `opts` - [common options](#module-common-options)
 
   ## Returns
   - `:ok` on success
@@ -600,131 +678,237 @@ defmodule PubsubGrpc do
   Executes a custom gRPC operation using a connection from the pool.
 
   The function receives a gRPC channel and should return the result of a
-  gRPC stub call.
+  gRPC stub call. `opts` are the [common options](#module-common-options);
+  `:timeout` here only bounds the wait for a pool connection (pass a timeout to
+  the stub call yourself).
+
+  ## Returns
+  - `{:ok, result}` - the callback returned `{:ok, result}`
+  - `{:error, %PubsubGrpc.Error{}}` - the callback returned `{:error, reason}`,
+    or no connection could be checked out from the pool
+  - `{:ok, value}` - the callback returned any other value (e.g. `:ok` or a map)
 
   ## Examples
 
       operation = fn channel ->
-        request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
-        opts = PubsubGrpc.Auth.request_opts()
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, opts)
+        request = %PubsubGrpc.Proto.Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
+        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
+        PubsubGrpc.Proto.Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end
 
       {:ok, topic} = PubsubGrpc.execute(operation)
 
   """
-  @spec execute((GRPC.Channel.t() -> term()), keyword()) ::
+  @spec execute((channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, Error.t()}
   def execute(operation_fn, opts \\ []) when is_function(operation_fn, 1) do
-    Client.execute(operation_fn, opts) |> Result.unwrap()
+    Client.execute(operation_fn, opts) |> Result.unwrap_any()
   end
 
   @doc """
-  Executes multiple operations using the same connection.
+  Same as `execute/2`.
 
-  More efficient when performing several operations in sequence.
-
-  ## Examples
-
-      result = PubsubGrpc.with_connection(fn channel ->
-        auth_opts = PubsubGrpc.Auth.request_opts()
-        # ... multiple operations on channel
-      end)
-
+  Deprecated: call `execute/2`, which takes the same callback and options and
+  returns the same values.
   """
-  @spec with_connection((GRPC.Channel.t() -> term()), keyword()) ::
+  @deprecated "Use PubsubGrpc.execute/2"
+  @spec with_connection((channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, Error.t()}
   def with_connection(fun, opts \\ []) when is_function(fun, 1) do
-    Client.execute(fun, opts) |> Result.unwrap()
+    execute(fun, opts)
   end
 
-  # Schema management (delegated)
+  # Schema management (delegated to the internal PubsubGrpc.Schema)
 
   @doc """
   Lists schemas in a project.
 
-  ## Options
-  - `:view` - `:basic` or `:full` (default: `:basic`)
-  - `:page_size` - Maximum number of schemas to return
-  - `:page_token` - Token for pagination
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` (name and type only) or `:full` (with the definition);
+      default `:basic`
+    - `:page_size` - Maximum number of schemas to return (default: server default)
+    - `:page_token` - Token from a previous response's `next_page_token`
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, %{schemas: [schema()], next_page_token: String.t()}}` - `next_page_token`
+    is `""` on the last page
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, %{schemas: schemas}} = PubsubGrpc.list_schemas("my-project", view: :full)
 
   """
+  @spec list_schemas(String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   defdelegate list_schemas(project_id, opts \\ []), to: Schema
 
   @doc """
-  Gets details of a specific schema.
+  Gets a schema.
 
-  ## Options
-  - `:view` - `:basic` or `:full` (default: `:full`)
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` or `:full` (default: `:full`)
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, schema}` - the `t:schema/0`
+  - `{:error, %PubsubGrpc.Error{code: :not_found}}` - the schema does not exist
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema")
 
   """
+  @spec get_schema(String.t(), String.t(), keyword()) :: {:ok, schema()} | {:error, Error.t()}
   defdelegate get_schema(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
-  Creates a new schema.
+  Creates a schema.
 
   ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
   - `type` - `:protocol_buffer` or `:avro`
   - `definition` - The schema definition string
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, schema}` - the created `t:schema/0`
+  - `{:error, %PubsubGrpc.Error{code: :already_exists}}` - the schema ID is taken
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      definition = ~s({"type": "record", "name": "Event", "fields": [{"name": "id", "type": "string"}]})
+      {:ok, schema} = PubsubGrpc.create_schema("my-project", "event", :avro, definition)
 
   """
-  defdelegate create_schema(project_id, schema_id, type, definition), to: Schema
+  @spec create_schema(String.t(), String.t(), schema_type(), String.t(), keyword()) ::
+          {:ok, schema()} | {:error, Error.t()}
+  defdelegate create_schema(project_id, schema_id, type, definition, opts \\ []), to: Schema
 
   @doc """
   Deletes a schema.
+
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `:ok`
+  - `{:error, %PubsubGrpc.Error{code: :not_found}}` - the schema does not exist
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
-  defdelegate delete_schema(project_id, schema_id), to: Schema
+  @spec delete_schema(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
+  defdelegate delete_schema(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
-  Validates a schema definition.
+  Validates a schema definition without creating it.
+
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `type` - `:protocol_buffer` or `:avro`
+  - `definition` - The schema definition string
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, response}` - the definition is valid (`t:validate_schema_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the definition is invalid
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
-  defdelegate validate_schema(project_id, type, definition), to: Schema
+  @spec validate_schema(String.t(), schema_type(), String.t(), keyword()) ::
+          {:ok, validate_schema_response()} | {:error, Error.t()}
+  defdelegate validate_schema(project_id, type, definition, opts \\ []), to: Schema
 
   @doc """
-  Lists revisions of a schema.
+  Lists the revisions of a schema, newest first.
+
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` or `:full` (default: `:basic`)
+    - `:page_size` - Maximum number of revisions to return (default: server default)
+    - `:page_token` - Token from a previous response's `next_page_token`
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, %{schemas: [schema()], next_page_token: String.t()}}`
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
+  @spec list_schema_revisions(String.t(), String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   defdelegate list_schema_revisions(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
   Validates a message against an existing schema.
 
   ## Parameters
-  - `schema_name` - Full schema resource name or just the schema ID
+  - `project_id` - The Google Cloud project ID; a bare schema ID is resolved in it
+  - `schema_name` - Schema ID, or full name `projects/<project>/schemas/<schema_id>`
   - `message` - Message bytes to validate
   - `encoding` - `:json` or `:binary`
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, response}` - the message is valid (`t:validate_message_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the message does not match
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, _} = PubsubGrpc.validate_message("my-project", "event", ~s({"id": "1"}), :json)
 
   """
-  defdelegate validate_message(project_id, schema_name, message, encoding), to: Schema
+  @spec validate_message(String.t(), String.t(), binary(), encoding(), keyword()) ::
+          {:ok, validate_message_response()} | {:error, Error.t()}
+  defdelegate validate_message(project_id, schema_name, message, encoding, opts \\ []),
+    to: Schema
 
   @doc """
   Validates a message against an inline schema definition.
 
   ## Parameters
+  - `project_id` - The Google Cloud project ID
   - `type` - `:protocol_buffer` or `:avro`
   - `definition` - Schema definition string
   - `message` - Message bytes to validate
   - `encoding` - `:json` or `:binary`
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, response}` - the message is valid (`t:validate_message_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the message or definition
+    is invalid
+  - `{:error, %PubsubGrpc.Error{}}`
 
   """
-  defdelegate validate_message_with_schema(project_id, type, definition, message, encoding),
-    to: Schema
-
-  # Private helpers
-
-  defp grpc_opts(opts \\ []) do
-    timeout = opts[:timeout] || Application.get_env(:pubsub_grpc, :default_timeout, 30_000)
-
-    case PubsubGrpc.Auth.request_opts() do
-      {:ok, auth_opts} -> {:ok, auth_opts ++ [timeout: timeout]}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp topic_path(project_id, topic_id) do
-    "projects/#{project_id}/topics/#{topic_id}"
-  end
-
-  defp subscription_path(project_id, subscription_id) do
-    "projects/#{project_id}/subscriptions/#{subscription_id}"
-  end
+  @spec validate_message_with_schema(
+          String.t(),
+          schema_type(),
+          String.t(),
+          binary(),
+          encoding(),
+          keyword()
+        ) :: {:ok, validate_message_response()} | {:error, Error.t()}
+  defdelegate validate_message_with_schema(
+                project_id,
+                type,
+                definition,
+                message,
+                encoding,
+                opts \\ []
+              ),
+              to: Schema
 end

@@ -1,212 +1,91 @@
 defmodule PubsubGrpcConnectionTest do
-  use ExUnit.Case
+  # Each test gets its own pool, so the application's pool is never stopped.
+  use ExUnit.Case, async: true
 
-  alias PubsubGrpc.Client
+  import PubsubGrpc.Eventually, only: [eventually: 1]
 
+  alias PubsubGrpc.{Client, Error}
+
+  @moduletag :integration
   @moduletag :connection_pool
 
-  describe "connection pool" do
-    setup do
-      # Wait for pool to be ready (connections are established asynchronously)
-      wait_for_pool(30)
-      :ok
-    end
+  setup do
+    pool = :"pubsub_grpc_test_pool_#{System.unique_integer([:positive])}"
 
-    test "application starts with connection pool" do
-      # Check that the connection pool supervisor is registered
-      # New architecture uses PubsubGrpc.ConnectionPool.Supervisor as the process name
-      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
-    end
+    {:ok, config} =
+      GrpcConnectionPool.Config.local(
+        host: "localhost",
+        port: 8085,
+        pool_name: pool,
+        pool_size: 2
+      )
 
-    test "can execute simple operation through pool" do
-      # Test a simple operation that doesn't require actual GRPC connection
-      simple_operation = fn _channel ->
-        {:ok, "test_result"}
-      end
+    start_supervised!({GrpcConnectionPool, config})
+    assert :ok = GrpcConnectionPool.await_ready(pool, 5_000)
 
-      # This should work even without a real GRPC connection if the pool is working
-      result =
-        case Client.execute(simple_operation) do
-          {:ok, {:ok, "test_result"}} -> :ok
-          {:error, _} -> :expected_error
-          other -> other
-        end
+    %{pool: pool}
+  end
 
-      assert result in [:ok, :expected_error],
-             "Pool should be functional, got: #{inspect(result)}"
-    end
+  test "the application pool serves requests on the default path" do
+    # Only one connection is awaited at startup (test_helper.exs); :healthy needs all.
+    eventually(fn -> Client.status().status == :healthy end)
+    assert {:ok, %{topics: topics}} = PubsubGrpc.list_topics("test-project-id")
+    assert is_list(topics)
+  end
 
-    test "connection pool handles multiple concurrent operations" do
-      tasks =
-        Enum.map(1..10, fn i ->
-          Task.async(fn ->
-            operation = fn _channel ->
-              :timer.sleep(10)
-              {:ok, i}
-            end
+  test "execute/2 runs the callback with a channel and returns its result", %{pool: pool} do
+    assert {:ok, {:ok, "test_result"}} =
+             Client.execute(fn %GRPC.Channel{} -> {:ok, "test_result"} end, pool: pool)
+  end
 
-            Client.execute(operation)
-          end)
-        end)
+  test "PubsubGrpc.execute/2 honours :pool and unwraps the callback result", %{pool: pool} do
+    assert {:ok, "execute_works"} =
+             PubsubGrpc.execute(fn _ -> {:ok, "execute_works"} end, pool: pool)
+  end
 
-      results = Enum.map(tasks, &Task.await/1)
-
-      # All tasks should complete (either successfully or with expected connection errors)
-      assert length(results) == 10
-
-      # Check that we got results (could be success or connection errors)
-      Enum.each(results, fn result ->
-        case result do
-          {:ok, {:ok, id}} when is_integer(id) -> :ok
-          {:error, _} -> :expected_connection_error
-          # Some operations might return bare :ok
-          :ok -> :ok
-          other -> flunk("Unexpected result: #{inspect(other)}")
-        end
+  test "handles concurrent callers", %{pool: pool} do
+    results =
+      1..10
+      |> Enum.map(fn i ->
+        Task.async(fn -> Client.execute(fn _ -> {:ok, i} end, pool: pool) end)
       end)
-    end
+      |> Task.await_many()
 
-    test "connection pool survives and recovers from errors" do
-      # Operation that will cause an error inside the pool
-      error_operation = fn _channel ->
-        raise "Simulated error"
-      end
-
-      # Client.execute wraps the call, so the raise propagates through
-      result =
-        try do
-          Client.execute(error_operation)
-          :no_raise
-        rescue
-          RuntimeError -> :raised
-        end
-
-      # Either raises through or pool returns error - both acceptable
-      assert result in [:raised, :no_raise]
-
-      # Pool should still be alive
-      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
-
-      # And should still be able to handle new operations
-      simple_operation = fn _channel ->
-        {:ok, "after_error"}
-      end
-
-      result2 =
-        case Client.execute(simple_operation) do
-          {:ok, {:ok, "after_error"}} -> :ok
-          {:error, _} -> :expected_connection_error
-        end
-
-      assert result2 in [:ok, :expected_connection_error]
-    end
-
-    test "with_connection function works" do
-      result =
-        Client.with_connection(fn _conn ->
-          {:ok, "with_connection_works"}
-        end)
-
-      # Should either work or return a connection error
-      case result do
-        {:ok, {:ok, "with_connection_works"}} -> :ok
-        {:error, _} -> :expected_connection_error
-        other -> flunk("Unexpected result: #{inspect(other)}")
-      end
-    end
-
-    test "connection pool handles graceful disconnect without FunctionClauseError" do
-      # This test verifies our fix for the GRPC v0.11.5 disconnect issue
-      # where FunctionClauseError was thrown during pool shutdown
-
-      # Stop the pool - this should not raise FunctionClauseError
-      result =
-        try do
-          GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
-          :ok
-        rescue
-          error -> {:error, error}
-        catch
-          :exit, reason -> {:exit, reason}
-        end
-
-      assert result == :ok,
-             "Pool shutdown should complete without errors, got: #{inspect(result)}"
-
-      # Restart the pool for subsequent tests
-      # The application supervisor will restart it automatically
-      wait_for_pool_restart(10)
-    end
-
-    test "worker cleanup handles different channel types safely" do
-      # This test specifically targets our worker cleanup fix
-      # We can't directly test the cleanup_connection function, but we can
-      # test that the pool can handle multiple start/stop cycles without crashes
-
-      for _i <- 1..3 do
-        # Stop the pool
-        result = GrpcConnectionPool.stop(PubsubGrpc.ConnectionPool)
-        assert result == :ok
-
-        # Wait a bit
-        :timer.sleep(50)
-
-        # Wait for restart
-        wait_for_pool_restart(10)
-      end
-
-      # Final verification that the pool is still functional
-      assert Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) != nil
-    end
+    assert results == Enum.map(1..10, &{:ok, {:ok, &1}})
   end
 
-  describe "connection configuration" do
-    test "reads emulator configuration" do
-      config = Application.get_env(:pubsub_grpc, :emulator)
-
-      assert config != nil
-      assert config[:project_id] == "test-project-id"
-      assert config[:host] == "localhost"
-      assert config[:port] == 8085
+  test "a raising callback propagates and the pool keeps serving", %{pool: pool} do
+    assert_raise RuntimeError, "Simulated error", fn ->
+      Client.execute(fn _ -> raise "Simulated error" end, pool: pool)
     end
+
+    assert {:ok, {:ok, "after_error"}} =
+             Client.execute(fn _ -> {:ok, "after_error"} end, pool: pool)
   end
 
-  # Helper function to wait for pool to be ready
-  defp wait_for_pool(retries) when retries <= 0 do
-    # If pool never becomes healthy, that's OK for some tests
-    # Just ensure the supervisor is registered
-    :ok
+  test "status/1 reports a healthy dedicated pool", %{pool: pool} do
+    # await_ready/2 returns once one channel is up; :healthy needs all of them.
+    status =
+      eventually(fn ->
+        status = Client.status(pool: pool)
+        status.current_size == 2 && status
+      end)
+
+    assert %{pool_name: ^pool, status: :healthy, current_size: 2, expected_size: 2} = status
   end
 
-  defp wait_for_pool(retries) do
-    # Check if supervisor is registered (faster than waiting for connections)
-    if Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) do
-      # Supervisor exists, wait for connections to establish
-      case GrpcConnectionPool.status(PubsubGrpc.ConnectionPool) do
-        %{status: :healthy} ->
-          :ok
-
-        _ ->
-          :timer.sleep(100)
-          wait_for_pool(retries - 1)
-      end
-    else
-      # Supervisor not yet registered
-      :timer.sleep(100)
-      wait_for_pool(retries - 1)
-    end
+  test "public API calls can target a dedicated pool", %{pool: pool} do
+    assert {:ok, %{topics: topics}} = PubsubGrpc.list_topics("test-project-id", pool: pool)
+    assert is_list(topics)
   end
 
-  # Helper function to wait for pool restart after shutdown
-  defp wait_for_pool_restart(retries) when retries <= 0, do: :ok
+  test "a stopped pool yields connection errors", %{pool: pool} do
+    # The pool's child id is its name.
+    stop_supervised!(pool)
 
-  defp wait_for_pool_restart(retries) do
-    # Wait for the supervisor to be restarted by the application supervisor
-    if Process.whereis(PubsubGrpc.ConnectionPool.Supervisor) do
-      :ok
-    else
-      :timer.sleep(200)
-      wait_for_pool_restart(retries - 1)
-    end
+    assert {:error, :not_connected} = Client.execute(fn _ -> :unreachable end, pool: pool)
+
+    assert {:error, %Error{code: :connection_error, details: :not_connected}} =
+             PubsubGrpc.list_topics("test-project-id", pool: pool, timeout: 100)
   end
 end

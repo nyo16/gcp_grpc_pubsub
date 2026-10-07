@@ -1,208 +1,196 @@
 defmodule PubsubGrpcMainApiTest do
-  use ExUnit.Case
-  doctest PubsubGrpc
+  use ExUnit.Case, async: true
 
-  alias Google.Pubsub.V1, as: PubsubV1
-  alias PubsubGrpc.EmulatorHelper
+  import PubsubGrpc.EmulatorHelper,
+    only: [
+      unique_resources: 1,
+      unique_name: 1,
+      track_topic: 1,
+      track_subscription: 1,
+      list_all: 2
+    ]
+
+  import PubsubGrpc.Eventually
+
+  alias PubsubGrpc.Error
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.Publisher.Stub, as: PublisherStub
 
   @moduletag :integration
 
-  setup do
-    # Generate unique names for each test
-    topic_name = EmulatorHelper.test_topic_name()
-    subscription_name = EmulatorHelper.test_subscription_name()
+  @project "test-project-id"
 
-    # Cleanup after each test
-    on_exit(fn ->
-      EmulatorHelper.cleanup_subscription(subscription_name)
-      EmulatorHelper.cleanup_topic(topic_name)
-    end)
-
-    %{topic_name: topic_name, subscription_name: subscription_name}
-  end
+  setup :unique_resources
 
   test "create_topic using main API", %{topic_name: topic_name} do
-    assert {:ok, topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
-    assert topic.name == "projects/test-project-id/topics/#{topic_name}"
+    assert {:ok, %PubsubV1.Topic{name: name}} = PubsubGrpc.create_topic(@project, topic_name)
+    assert name == "projects/#{@project}/topics/#{topic_name}"
   end
 
-  test "delete_topic using main API", %{topic_name: topic_name} do
-    # First create a topic
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+  test "delete_topic removes the topic", %{topic_name: topic_name} do
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
 
-    # Then delete it
-    assert :ok = PubsubGrpc.delete_topic("test-project-id", topic_name)
-
-    # Verify it's gone by trying to create it again (should succeed)
-    assert {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+    assert :ok = PubsubGrpc.delete_topic(@project, topic_name)
+    assert {:error, %Error{code: :not_found}} = PubsubGrpc.get_topic(@project, topic_name)
   end
 
   test "list_topics using main API" do
-    # Create a unique topic for this test
-    topic_name = "list-test-#{:os.system_time(:millisecond)}"
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+    topic_name = track_topic(unique_name("list-test"))
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
 
-    # List topics
-    {:ok, result} = PubsubGrpc.list_topics("test-project-id")
+    assert {:ok, %{topics: _, next_page_token: token}} = PubsubGrpc.list_topics(@project)
+    assert is_binary(token)
 
-    # Should contain our topic
-    topic_names = Enum.map(result.topics, fn topic -> topic.name end)
-    assert "projects/test-project-id/topics/#{topic_name}" in topic_names
-
-    # Cleanup
-    PubsubGrpc.delete_topic("test-project-id", topic_name)
+    topics = list_all(:topics, &PubsubGrpc.list_topics(@project, &1))
+    assert "projects/#{@project}/topics/#{topic_name}" in Enum.map(topics, & &1.name)
   end
 
-  test "publish_message using main API", %{topic_name: topic_name} do
-    # Create topic first
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+  test "publish_message round-trips data and attributes", %{
+    topic_name: topic_name,
+    subscription_name: subscription_name
+  } do
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
+    {:ok, _sub} = PubsubGrpc.create_subscription(@project, topic_name, subscription_name)
 
-    # Publish single message
-    {:ok, response} = PubsubGrpc.publish_message("test-project-id", topic_name, "Hello World!")
-    assert length(response.message_ids) == 1
+    assert {:ok, %{message_ids: [plain_id]}} =
+             PubsubGrpc.publish_message(@project, topic_name, "Hello World!")
 
-    # Publish message with attributes
-    {:ok, response} =
-      PubsubGrpc.publish_message("test-project-id", topic_name, "Hello with attrs!", %{
-        "source" => "test"
-      })
+    assert {:ok, %{message_ids: [attrs_id]}} =
+             PubsubGrpc.publish_message(@project, topic_name, "Hello with attrs!", %{
+               "source" => "test"
+             })
 
-    assert length(response.message_ids) == 1
+    by_id =
+      @project
+      |> pull_until(subscription_name, 2)
+      |> Map.new(&{&1.message.message_id, &1.message})
+
+    assert %{data: "Hello World!", attributes: plain_attrs} = by_id[plain_id]
+    assert plain_attrs == %{}
+    assert %{data: "Hello with attrs!", attributes: %{"source" => "test"}} = by_id[attrs_id]
   end
 
-  test "publish using main API", %{topic_name: topic_name} do
-    # Create topic first
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+  test "publish sends a batch and every message round-trips", %{
+    topic_name: topic_name,
+    subscription_name: subscription_name
+  } do
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
+    {:ok, _sub} = PubsubGrpc.create_subscription(@project, topic_name, subscription_name)
 
-    # Publish multiple messages
     messages = [
       %{data: "Message 1", attributes: %{"index" => "1"}},
       %{data: "Message 2", attributes: %{"index" => "2"}},
       %{data: "Message 3"}
     ]
 
-    {:ok, response} = PubsubGrpc.publish("test-project-id", topic_name, messages)
-    assert length(response.message_ids) == 3
+    assert {:ok, %{message_ids: ids}} = PubsubGrpc.publish(@project, topic_name, messages)
+    assert length(ids) == 3
+    assert ids == Enum.uniq(ids)
+
+    received =
+      @project
+      |> pull_until(subscription_name, 3)
+      |> Map.new(&{&1.message.message_id, {&1.message.data, &1.message.attributes}})
+
+    # message_ids are returned in publish order.
+    assert received == %{
+             Enum.at(ids, 0) => {"Message 1", %{"index" => "1"}},
+             Enum.at(ids, 1) => {"Message 2", %{"index" => "2"}},
+             Enum.at(ids, 2) => {"Message 3", %{}}
+           }
   end
 
   test "create_subscription using main API", %{
     topic_name: topic_name,
     subscription_name: subscription_name
   } do
-    # Create topic first
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
 
-    # Create subscription
-    {:ok, subscription} =
-      PubsubGrpc.create_subscription("test-project-id", topic_name, subscription_name)
+    assert {:ok, subscription} =
+             PubsubGrpc.create_subscription(@project, topic_name, subscription_name)
 
-    assert subscription.name == "projects/test-project-id/subscriptions/#{subscription_name}"
-    assert subscription.topic == "projects/test-project-id/topics/#{topic_name}"
+    assert subscription.name == "projects/#{@project}/subscriptions/#{subscription_name}"
+    assert subscription.topic == "projects/#{@project}/topics/#{topic_name}"
 
-    # Create subscription with custom ack deadline
-    sub_name_2 = "#{subscription_name}-2"
+    sub_name_2 = track_subscription(unique_name("test-subscription"))
 
-    {:ok, subscription} =
-      PubsubGrpc.create_subscription("test-project-id", topic_name, sub_name_2,
-        ack_deadline_seconds: 30
-      )
-
-    assert subscription.ack_deadline_seconds == 30
-
-    # Cleanup
-    PubsubGrpc.delete_subscription("test-project-id", sub_name_2)
+    assert {:ok, %PubsubV1.Subscription{ack_deadline_seconds: 30}} =
+             PubsubGrpc.create_subscription(@project, topic_name, sub_name_2,
+               ack_deadline_seconds: 30
+             )
   end
 
-  test "delete_subscription using main API", %{
+  test "delete_subscription removes the subscription", %{
     topic_name: topic_name,
     subscription_name: subscription_name
   } do
-    # Create topic and subscription
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
+    {:ok, _sub} = PubsubGrpc.create_subscription(@project, topic_name, subscription_name)
 
-    {:ok, _subscription} =
-      PubsubGrpc.create_subscription("test-project-id", topic_name, subscription_name)
+    assert :ok = PubsubGrpc.delete_subscription(@project, subscription_name)
 
-    # Delete subscription
-    assert :ok = PubsubGrpc.delete_subscription("test-project-id", subscription_name)
+    assert {:error, %Error{code: :not_found}} =
+             PubsubGrpc.get_subscription(@project, subscription_name)
   end
 
   test "full workflow using main API", %{
     topic_name: topic_name,
     subscription_name: subscription_name
   } do
-    # Create topic
-    {:ok, _topic} = PubsubGrpc.create_topic("test-project-id", topic_name)
+    {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
+    {:ok, _sub} = PubsubGrpc.create_subscription(@project, topic_name, subscription_name)
 
-    # Create subscription
-    {:ok, _subscription} =
-      PubsubGrpc.create_subscription("test-project-id", topic_name, subscription_name)
-
-    # Publish messages
     messages = [
       %{data: "Workflow message 1", attributes: %{"type" => "test"}},
       %{data: "Workflow message 2", attributes: %{"type" => "test"}}
     ]
 
-    {:ok, _response} = PubsubGrpc.publish("test-project-id", topic_name, messages)
+    {:ok, _response} = PubsubGrpc.publish(@project, topic_name, messages)
 
-    # Pull messages (may need retry as delivery can take time)
-    received_messages =
-      Enum.reduce_while(1..5, [], fn _attempt, acc ->
-        case PubsubGrpc.pull("test-project-id", subscription_name, 5) do
-          {:ok, []} when acc == [] ->
-            :timer.sleep(500)
-            {:cont, acc}
+    received = pull_until(@project, subscription_name, 2)
 
-          {:ok, new_messages} ->
-            all_messages = acc ++ new_messages
+    assert received |> Enum.map(& &1.message.data) |> Enum.sort() ==
+             ["Workflow message 1", "Workflow message 2"]
 
-            if length(all_messages) >= 2 do
-              {:halt, all_messages}
-            else
-              :timer.sleep(200)
-              {:cont, all_messages}
-            end
-        end
-      end)
+    assert Enum.all?(received, &(&1.message.attributes == %{"type" => "test"}))
 
-    assert length(received_messages) >= 2
-
-    # Verify message content
-    message_data = Enum.map(received_messages, & &1.message.data)
-    assert "Workflow message 1" in message_data
-    assert "Workflow message 2" in message_data
-
-    # Acknowledge messages
-    ack_ids = Enum.map(received_messages, & &1.ack_id)
-    assert :ok = PubsubGrpc.acknowledge("test-project-id", subscription_name, ack_ids)
+    ack_ids = Enum.map(received, & &1.ack_id)
+    assert :ok = PubsubGrpc.acknowledge(@project, subscription_name, ack_ids)
   end
 
-  test "with_connection using main API", %{topic_name: topic_name} do
+  test "execute runs a raw stub call with auth options", %{topic_name: topic_name} do
+    topic_path = "projects/#{@project}/topics/#{topic_name}"
+
     result =
-      PubsubGrpc.with_connection(fn channel ->
-        # Create topic using direct GRPC call
-        topic_path = "projects/test-project-id/topics/#{topic_name}"
-        request = %PubsubV1.Topic{name: topic_path}
-        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts()
-        PublisherStub.create_topic(channel, request, auth_opts)
+      PubsubGrpc.execute(fn channel ->
+        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
+        PublisherStub.create_topic(channel, %PubsubV1.Topic{name: topic_path}, auth_opts)
       end)
 
-    assert {:ok, topic} = result
-    assert topic.name == "projects/test-project-id/topics/#{topic_name}"
+    assert {:ok, %PubsubV1.Topic{name: ^topic_path}} = result
   end
 
-  test "execute custom operation using main API" do
-    # Test a custom operation - getting a topic that doesn't exist
+  test "execute returns {:ok, value} for non-tuple callback results" do
+    assert {:ok, :ok} = PubsubGrpc.execute(fn %GRPC.Channel{} -> :ok end)
+    assert {:ok, %{answer: 42}} = PubsubGrpc.execute(fn %GRPC.Channel{} -> %{answer: 42} end)
+  end
+
+  test "deprecated with_connection/2 still behaves like execute/2" do
+    # apply/3 so the deprecated call doesn't emit a compile-time warning.
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    result = apply(PubsubGrpc, :with_connection, [fn %GRPC.Channel{} -> %{answer: 42} end])
+    assert {:ok, %{answer: 42}} = result
+  end
+
+  test "execute maps a gRPC error to a structured error" do
     operation = fn channel ->
       request = %PubsubV1.GetTopicRequest{
-        topic: "projects/test-project-id/topics/non-existent-topic"
+        topic: "projects/#{@project}/topics/#{unique_name("non-existent")}"
       }
 
       PublisherStub.get_topic(channel, request)
     end
 
-    assert {:error, %PubsubGrpc.Error{code: :not_found}} = PubsubGrpc.execute(operation)
+    assert {:error, %Error{code: :not_found}} = PubsubGrpc.execute(operation)
   end
 end
