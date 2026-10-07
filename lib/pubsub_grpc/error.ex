@@ -13,6 +13,15 @@ defmodule PubsubGrpc.Error do
   - `details` - The original error term (e.g., `%GRPC.RPCError{}`, exception struct)
   - `grpc_status` - The integer gRPC status code when applicable, `nil` otherwise
 
+  ## Logging
+
+  `details` holds raw upstream terms: gRPC errors with server-provided messages,
+  Goth/HTTP errors, exception structs, connection-level reasons. They may contain
+  credentials-adjacent data (account emails, credential file paths, request
+  metadata) and are not size-bounded. **Do not log `details` verbatim.** Log
+  `code`, `message` and `grpc_status` instead; `inspect/1` on this struct omits
+  `details` for that reason.
+
   ## Examples
 
       case PubsubGrpc.create_topic("my-project", "my-topic") do
@@ -30,6 +39,9 @@ defmodule PubsubGrpc.Error do
           details: term(),
           grpc_status: non_neg_integer() | nil
         }
+
+  @typedoc "A raw gRPC error as returned by grpc stubs (`%GRPC.RPCError{}`)."
+  @type grpc_error :: %GRPC.RPCError{}
 
   @derive {Inspect, only: [:code, :message, :grpc_status]}
   defstruct [:code, :message, :details, :grpc_status]
@@ -60,7 +72,7 @@ defmodule PubsubGrpc.Error do
   Maps the gRPC status code to a descriptive atom code and preserves
   the original error in `details`.
   """
-  @spec from_grpc_error(GRPC.RPCError.t()) :: t()
+  @spec from_grpc_error(grpc_error()) :: t()
   def from_grpc_error(%GRPC.RPCError{status: status, message: message} = error) do
     %__MODULE__{
       code: Map.get(@grpc_status_codes, status, :unknown),

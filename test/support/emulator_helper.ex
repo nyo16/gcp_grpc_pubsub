@@ -1,128 +1,76 @@
 defmodule PubsubGrpc.EmulatorHelper do
   @moduledoc """
-  Helper module for managing the Pub/Sub emulator during tests
+  Naming and cleanup helpers for tests that run against the Pub/Sub emulator.
+
+  The `track_*` functions must be called from the test process: they register
+  an `on_exit` callback that deletes the resource even if the test fails.
   """
+
+  import ExUnit.Callbacks, only: [on_exit: 1]
 
   @project_id "test-project-id"
-  @emulator_host "localhost"
-  @emulator_port 8085
 
-  @doc """
-  Start the emulator using Docker Compose
-  """
-  def start_emulator do
-    case System.cmd("docker-compose", ["up", "-d", "pubsub-emulator"], stderr_to_stdout: true) do
-      {output, 0} ->
-        IO.puts("Emulator started: #{output}")
-        wait_for_emulator()
-        :ok
-
-      {error, _} ->
-        IO.puts("Failed to start emulator: #{error}")
-        {:error, :emulator_start_failed}
-    end
-  end
-
-  @doc """
-  Stop the emulator
-  """
-  def stop_emulator do
-    System.cmd("docker-compose", ["down"], stderr_to_stdout: true)
-    :ok
-  end
-
-  @doc """
-  Wait for the emulator to be ready
-  """
-  def wait_for_emulator(retries \\ 30) do
-    if retries <= 0 do
-      raise "Emulator failed to start within timeout"
-    end
-
-    case :gen_tcp.connect(
-           String.to_charlist(@emulator_host),
-           @emulator_port,
-           [:binary, active: false],
-           1000
-         ) do
-      {:ok, socket} ->
-        :gen_tcp.close(socket)
-        # Give emulator additional time to fully initialize gRPC services
-        :timer.sleep(2000)
-        :ok
-
-      {:error, _} ->
-        :timer.sleep(1000)
-        wait_for_emulator(retries - 1)
-    end
-  end
-
-  @doc """
-  Get project ID for tests
-  """
+  @doc "Project ID used by the emulator tests."
   def project_id, do: @project_id
 
-  @doc """
-  Generate unique test topic name
-  """
-  def test_topic_name(suffix \\ nil) do
-    base = "test-topic-#{:os.system_time(:millisecond)}"
-    if suffix, do: "#{base}-#{suffix}", else: base
+  @doc "Returns a name that is unique within this VM run, e.g. `topic-42`."
+  def unique_name(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
+
+  @doc "Full topic resource path."
+  def topic_path(topic_id), do: "projects/#{@project_id}/topics/#{topic_id}"
+
+  @doc "Full subscription resource path."
+  def subscription_path(subscription_id),
+    do: "projects/#{@project_id}/subscriptions/#{subscription_id}"
+
+  @doc "Full schema resource path."
+  def schema_path(schema_id), do: "projects/#{@project_id}/schemas/#{schema_id}"
+
+  @doc "Deletes the topic when the test exits. Returns `topic_id`."
+  def track_topic(topic_id) do
+    on_exit(fn -> PubsubGrpc.delete_topic(@project_id, topic_id) end)
+    topic_id
+  end
+
+  @doc "Deletes the subscription when the test exits. Returns `subscription_id`."
+  def track_subscription(subscription_id) do
+    on_exit(fn -> PubsubGrpc.delete_subscription(@project_id, subscription_id) end)
+    subscription_id
+  end
+
+  @doc "Deletes the schema when the test exits. Returns `schema_id`."
+  def track_schema(schema_id) do
+    on_exit(fn -> PubsubGrpc.delete_schema(@project_id, schema_id) end)
+    schema_id
   end
 
   @doc """
-  Generate unique test subscription name
-  """
-  def test_subscription_name(suffix \\ nil) do
-    base = "test-subscription-#{:os.system_time(:millisecond)}"
-    if suffix, do: "#{base}-#{suffix}", else: base
-  end
+  Collects every page of a list call. `list_fun` receives the list options
+  (`page_size`, `page_token`) and returns `{:ok, %{^key => items, next_page_token: _}}`.
 
-  @doc """
-  Create full topic path
+  Use it instead of asserting membership in the first page: resources leaked by
+  aborted runs accumulate in a long-lived emulator.
   """
-  def topic_path(topic_name) do
-    "projects/#{@project_id}/topics/#{topic_name}"
-  end
+  def list_all(key, list_fun, page_size \\ 100), do: list_all(key, list_fun, page_size, "", [])
 
-  @doc """
-  Create full subscription path
-  """
-  def subscription_path(subscription_name) do
-    "projects/#{@project_id}/subscriptions/#{subscription_name}"
-  end
+  defp list_all(key, list_fun, page_size, token, acc) do
+    {:ok, %{^key => items, next_page_token: next}} =
+      list_fun.(page_size: page_size, page_token: token)
 
-  @doc """
-  Clean up resources after test
-  """
-  def cleanup_topic(topic_name) do
-    topic_path = topic_path(topic_name)
-
-    delete_topic_operation = fn channel ->
-      request = %Google.Pubsub.V1.DeleteTopicRequest{topic: topic_path}
-      Google.Pubsub.V1.Publisher.Stub.delete_topic(channel, request)
+    case next do
+      "" -> acc ++ items
+      next -> list_all(key, list_fun, page_size, next, acc ++ items)
     end
-
-    case PubsubGrpc.Client.execute(delete_topic_operation) do
-      {:ok, {:ok, _}} -> :ok
-      _ -> :ok
-    end
   end
 
   @doc """
-  Clean up subscription after test
+  Setup callback: a tracked unique topic and subscription name, as
+  `%{topic_name: _, subscription_name: _}`. Nothing is created.
   """
-  def cleanup_subscription(subscription_name) do
-    subscription_path = subscription_path(subscription_name)
-
-    delete_subscription_operation = fn channel ->
-      request = %Google.Pubsub.V1.DeleteSubscriptionRequest{subscription: subscription_path}
-      Google.Pubsub.V1.Subscriber.Stub.delete_subscription(channel, request)
-    end
-
-    case PubsubGrpc.Client.execute(delete_subscription_operation) do
-      {:ok, {:ok, _}} -> :ok
-      _ -> :ok
-    end
+  def unique_resources(_context \\ %{}) do
+    %{
+      topic_name: track_topic(unique_name("test-topic")),
+      subscription_name: track_subscription(unique_name("test-subscription"))
+    }
   end
 end

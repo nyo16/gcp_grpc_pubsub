@@ -7,6 +7,15 @@ defmodule PubsubGrpc.Auth do
   2. gcloud CLI fallback
   3. Returns structured error if no auth available
 
+  Cached tokens are read without any process hop. On a cache miss, exactly one
+  token fetch runs at a time: concurrent callers wait for that fetch and share
+  its result instead of each starting their own.
+
+  Tokens are only ever sent over TLS: the library's operations attach the
+  `authorization` metadata per checked-out channel (see `request_opts/1`), so a
+  plaintext channel, such as the local emulator or a misconfigured pool, never
+  receives one.
+
   ## Configuration
 
   To use Goth for authentication, add it to your supervision tree:
@@ -20,41 +29,54 @@ defmodule PubsubGrpc.Auth do
 
       config :pubsub_grpc, :goth, MyApp.Goth
 
+  ### Token fetch timeout
+
+  A token fetch (Goth or gcloud CLI) that takes longer than `:auth_timeout`
+  milliseconds (a positive integer, default `10_000`) is aborted, and every caller
+  waiting for it gets `{:error, %PubsubGrpc.Error{code: :deadline_exceeded}}`. A
+  timed-out gcloud process is killed. The value is read at runtime; an invalid
+  value fails application startup:
+
+      config :pubsub_grpc, :auth_timeout, 5_000
+
   """
 
   require Logger
 
-  alias PubsubGrpc.Error
+  alias PubsubGrpc.Auth.{Cache, CLI}
+  alias PubsubGrpc.{Config, Error, Telemetry}
 
-  @cache_table :pubsub_grpc_auth_cache
-  @cache_key :token
   # Cache gcloud CLI tokens for 50 minutes (tokens expire in 60 min)
   @cli_token_ttl_ms 50 * 60 * 1000
-
-  @doc false
-  @spec init_cache() :: :ok
-  def init_cache do
-    if :ets.whereis(@cache_table) == :undefined do
-      :ets.new(@cache_table, [:named_table, :public, :set])
-    end
-
-    :ok
-  end
+  @gcloud_args ["auth", "application-default", "print-access-token"]
+  # OAuth2 access tokens are opaque base64url-like strings of ~100+ chars;
+  # requiring 20 keeps status words such as "Done." from passing as a token.
+  @min_token_length 20
+  # The CLI kills gcloud itself this long before the Cache's own timeout fires, so
+  # the in-task timeout path normally wins and the Cache timer is a backstop.
+  @cli_deadline_margin 250
 
   @doc """
   Clears the cached authentication token.
 
   Useful when you need to force a token refresh, for example after
-  rotating credentials.
+  rotating credentials. A fetch that is in flight when the cache is cleared
+  still answers its waiting callers, but its token is not cached.
+
+  A request that fails with `UNAUTHENTICATED` invalidates the token it carried
+  (see `invalidate/1`).
   """
   @spec clear_cache() :: :ok
-  def clear_cache do
-    if :ets.whereis(@cache_table) != :undefined do
-      :ets.delete_all_objects(@cache_table)
-    end
+  def clear_cache, do: Cache.clear()
 
-    :ok
-  end
+  @doc """
+  Removes `token` from the cache if, and only if, it is the cached token.
+
+  Used after a request carrying `token` was rejected with `UNAUTHENTICATED`, so a
+  late rejection of an old token never evicts a newer one.
+  """
+  @spec invalidate(String.t()) :: :ok
+  def invalidate(token) when is_binary(token), do: Cache.invalidate(token)
 
   @doc """
   Gets an authentication token for Google Cloud API calls.
@@ -64,87 +86,91 @@ defmodule PubsubGrpc.Auth do
 
   ## Returns
   - `{:ok, "Bearer <token>"}` - Token retrieved successfully
-  - `{:error, %PubsubGrpc.Error{}}` - Unable to get token
+  - `{:error, %PubsubGrpc.Error{}}` - Unable to get token (`:deadline_exceeded`
+    if the fetch exceeded `:auth_timeout`)
 
   """
   @spec get_token() :: {:ok, String.t()} | {:error, Error.t()}
   def get_token do
-    case get_cached_token() do
-      {:ok, token} ->
-        {:ok, token}
-
-      :miss ->
-        fetch_and_cache_token()
+    case Cache.lookup() do
+      {:ok, token} -> {:ok, token}
+      :miss -> Cache.refresh(&fetch_token/0, Config.auth_timeout())
     end
   end
 
   @doc """
-  Gets request options including authentication metadata.
+  Gets request options including authentication metadata for `channel`.
 
-  In emulator mode, returns `{:ok, []}` (no auth needed).
-  In production, returns `{:ok, [metadata: %{"authorization" => token}]}`.
+  The token is attached only when `channel` uses TLS (scheme `https` with
+  credentials). For a plaintext channel, such as the local emulator, returns
+  `{:ok, []}` without fetching a token, so a token is never sent in cleartext,
+  whatever the global configuration. Conversely, any TLS channel gets the token,
+  including one from a pool passed as `:pool`: only point such pools at trusted
+  Google endpoints.
 
   ## Returns
   - `{:ok, keyword()}` - Options to pass to gRPC stub functions
   - `{:error, %PubsubGrpc.Error{}}` - Authentication failed
 
+  ## Examples
+
+      PubsubGrpc.execute(fn channel ->
+        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
+        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+      end)
+
+  """
+  @spec request_opts(PubsubGrpc.Client.channel()) :: {:ok, keyword()} | {:error, Error.t()}
+  def request_opts(%GRPC.Channel{} = channel) do
+    if tls?(channel), do: token_opts(), else: {:ok, []}
+  end
+
+  @doc """
+  Gets request options including authentication metadata, based on the global
+  configuration rather than a channel.
+
+  When the configured endpoint type is `:local` (emulator), returns `{:ok, []}`.
+  Otherwise returns `{:ok, [metadata: %{"authorization" => token}]}`.
+
+  Prefer `request_opts/1`: it decides per channel, so a token is never sent over
+  a plaintext connection, e.g. from a pool other than the configured one.
   """
   @spec request_opts() :: {:ok, keyword()} | {:error, Error.t()}
   def request_opts do
-    case Application.get_env(:pubsub_grpc, :emulator) do
-      nil ->
-        case get_token() do
-          {:ok, token} ->
-            {:ok, [metadata: %{"authorization" => token}]}
-
-          {:error, _} = error ->
-            error
-        end
-
-      _emulator_config ->
-        {:ok, []}
-    end
+    if Config.emulator?(), do: {:ok, []}, else: token_opts()
   end
 
   # Private functions
 
-  defp get_cached_token do
-    case :ets.lookup(@cache_table, @cache_key) do
-      [{@cache_key, token, expires_at}] ->
-        if System.monotonic_time(:millisecond) < expires_at, do: {:ok, token}, else: :miss
+  defp tls?(%GRPC.Channel{scheme: "https", cred: cred}) when not is_nil(cred), do: true
+  defp tls?(_channel), do: false
 
-      [] ->
-        :miss
+  defp token_opts do
+    with {:ok, token} <- get_token() do
+      {:ok, [metadata: %{"authorization" => token}]}
     end
-  rescue
-    # Table doesn't exist (Cache GenServer not started yet, or torn down).
-    ArgumentError -> :miss
   end
 
-  defp cache_token(token, ttl_ms) do
-    expires_at = System.monotonic_time(:millisecond) + ttl_ms
-    :ets.insert(@cache_table, {@cache_key, token, expires_at})
-    :ok
-  rescue
-    ArgumentError -> :ok
+  # Runs inside a PubsubGrpc.TaskSupervisor task started by Auth.Cache, once per
+  # real fetch (not per waiting caller).
+  defp fetch_token do
+    {source, fun} = token_source()
+    Telemetry.auth_span(source, fun)
   end
 
-  defp fetch_and_cache_token do
-    {source, fun} =
-      case Application.get_env(:pubsub_grpc, :goth) do
-        nil -> {:gcloud, fn -> get_token_fallback() end}
-        goth_name -> {:goth, fn -> get_token_from_goth(goth_name) end}
-      end
-
-    :telemetry.span([:pubsub_grpc, :auth], %{source: source}, fn ->
-      result = fun.()
-      {result, %{source: source, result: classify(result)}}
-    end)
+  # `:token_fetcher` is an internal seam (used by tests): a 0-arity function
+  # returning `{:ok, token, ttl_ms} | {:error, %PubsubGrpc.Error{}}`.
+  defp token_source do
+    case {Application.get_env(:pubsub_grpc, :token_fetcher),
+          Application.get_env(:pubsub_grpc, :goth)} do
+      {fetcher, _} when is_function(fetcher, 0) -> {:custom, fetcher}
+      {_, nil} -> {:gcloud, &get_token_from_gcloud/0}
+      {_, goth_name} -> {:goth, fn -> get_token_from_goth(goth_name) end}
+    end
   end
 
-  defp classify({:ok, _}), do: :ok
-  defp classify({:error, _}), do: :error
-
+  # Error details keep only a tag (module or atom): Goth errors and exceptions can
+  # embed HTTP response bodies or call arguments.
   defp get_token_from_goth(goth_name) do
     if Code.ensure_loaded?(Goth) do
       goth_name |> Goth.fetch() |> handle_goth_result()
@@ -160,26 +186,25 @@ defmodule PubsubGrpc.Auth do
   rescue
     e ->
       Logger.error("PubsubGrpc: Goth.fetch raised: #{inspect(e.__struct__)}")
-      {:error, Error.new(:unauthenticated, "Goth authentication crashed", e)}
+      {:error, Error.new(:unauthenticated, "Goth authentication crashed", e.__struct__)}
   catch
-    kind, reason ->
+    kind, _reason ->
       Logger.error("PubsubGrpc: Goth.fetch exited: #{kind}")
-      {:error, Error.new(:unauthenticated, "Goth authentication crashed", {kind, reason})}
+      {:error, Error.new(:unauthenticated, "Goth authentication crashed", kind)}
   end
 
   defp handle_goth_result({:ok, %{token: token, type: type} = result})
        when is_binary(token) and is_binary(type) do
-    bearer = "#{type} #{token}"
-    cache_token(bearer, goth_ttl_ms(result))
-    {:ok, bearer}
+    {:ok, "#{type} #{token}", goth_ttl_ms(result)}
   end
 
   defp handle_goth_result({:error, reason}) do
     # Goth was explicitly configured — do not silently fall back to gcloud CLI;
-    # surface the original error so the caller knows their chosen auth path failed.
-    Logger.warning("PubsubGrpc: Goth.fetch failed (#{error_tag(reason)})")
+    # surface the failure so the caller knows their chosen auth path failed.
+    tag = error_tag(reason)
+    Logger.warning("PubsubGrpc: Goth.fetch failed (#{inspect(tag)})")
 
-    {:error, Error.new(:unauthenticated, "Goth authentication failed", reason)}
+    {:error, Error.new(:unauthenticated, "Goth authentication failed", tag)}
   end
 
   defp goth_ttl_ms(%{expires: expires}) when not is_nil(expires) do
@@ -198,36 +223,63 @@ defmodule PubsubGrpc.Auth do
 
   defp goth_ttl_ms(_), do: @cli_token_ttl_ms
 
-  defp get_token_fallback do
-    case System.cmd("gcloud", ["auth", "application-default", "print-access-token"],
-           stderr_to_stdout: true
-         ) do
-      {token_output, 0} ->
-        token = "Bearer #{String.trim(token_output)}"
-        cache_token(token, @cli_token_ttl_ms)
-        {:ok, token}
+  defp get_token_from_gcloud do
+    case System.find_executable("gcloud") do
+      nil ->
+        Logger.error("PubsubGrpc: auth unavailable: gcloud not found")
+        {:error, Error.new(:unauthenticated, "gcloud not found")}
 
-      {error_output, exit_code} ->
-        # Log raw stderr at debug only (may contain ADC paths, account emails).
-        Logger.debug(fn -> "PubsubGrpc: gcloud stderr: #{String.trim(error_output)}" end)
-        Logger.error("PubsubGrpc: gcloud CLI auth failed (exit #{exit_code})")
-
-        {:error,
-         Error.new(
-           :unauthenticated,
-           "gcloud CLI auth failed (exit #{exit_code})",
-           {:gcloud_exit, exit_code}
-         )}
+      gcloud ->
+        deadline = max(Config.auth_timeout() - @cli_deadline_margin, 1)
+        gcloud |> CLI.run(@gcloud_args, deadline) |> handle_gcloud_result()
     end
-  rescue
-    e ->
-      Logger.error("PubsubGrpc: auth unavailable: #{inspect(e.__struct__)}")
+  end
 
-      {:error, Error.new(:unauthenticated, "no authentication available", e)}
-  catch
-    kind, reason ->
-      Logger.error("PubsubGrpc: auth unavailable: #{kind}")
-      {:error, Error.new(:unauthenticated, "no authentication available", {kind, reason})}
+  defp handle_gcloud_result({:ok, output, 0}) do
+    # stderr is merged into the output (warnings, update notices, "Done."): the
+    # token is the last line that looks like an access token, and only such a
+    # line may become a header.
+    token =
+      output
+      |> String.split(["\r\n", "\n"])
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(&access_token?/1)
+      |> List.last()
+
+    if token do
+      {:ok, "Bearer " <> token, @cli_token_ttl_ms}
+    else
+      Logger.error("PubsubGrpc: gcloud CLI output is not an access token")
+      {:error, Error.new(:unauthenticated, "gcloud CLI output is not an access token")}
+    end
+  end
+
+  defp handle_gcloud_result({:ok, output, exit_code}) do
+    # Log raw output at debug only (may contain ADC paths, account emails).
+    Logger.debug(fn -> "PubsubGrpc: gcloud output: #{String.trim(output)}" end)
+    Logger.error("PubsubGrpc: gcloud CLI auth failed (exit #{exit_code})")
+
+    {:error,
+     Error.new(
+       :unauthenticated,
+       "gcloud CLI auth failed (exit #{exit_code})",
+       {:gcloud_exit, exit_code}
+     )}
+  end
+
+  defp handle_gcloud_result({:error, :timeout}) do
+    Logger.error("PubsubGrpc: gcloud CLI auth timed out")
+    {:error, Error.new(:deadline_exceeded, "auth token fetch timed out")}
+  end
+
+  defp handle_gcloud_result({:error, reason}) do
+    Logger.error("PubsubGrpc: gcloud CLI auth failed (#{reason})")
+    {:error, Error.new(:unauthenticated, "gcloud CLI auth failed", reason)}
+  end
+
+  defp access_token?(line) do
+    byte_size(line) >= @min_token_length and
+      Regex.match?(~r/\A[A-Za-z0-9._\-~+\/]+=*\z/, line)
   end
 
   # Best-effort tag for logging: an atom describing the error shape, never its contents.

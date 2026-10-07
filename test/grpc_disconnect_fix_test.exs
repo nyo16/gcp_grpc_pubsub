@@ -1,96 +1,38 @@
 defmodule GrpcDisconnectFixTest do
   @moduledoc """
-  Test to verify the fix for FunctionClauseError during GRPC disconnect operations.
-
-  This test specifically targets the fix in grpc_connection_pool/worker.ex
-  where we handle the pattern mismatch in GRPC v0.11.5's disconnect handling.
+  Regression test: stopping a connected pool worker must not crash with a
+  FunctionClauseError in grpc's Gun disconnect handling.
   """
-  use ExUnit.Case
+  use ExUnit.Case, async: true
+
+  import PubsubGrpc.Eventually
 
   alias GrpcConnectionPool.Worker
 
-  describe "worker disconnect fix" do
-    setup do
-      start_supervised!({Registry, keys: :duplicate, name: :test_registry})
-      :ok
-    end
+  @moduletag :integration
 
-    test "worker can handle Gun connection cleanup without FunctionClauseError" do
-      {:ok, config} =
-        GrpcConnectionPool.Config.local(
-          host: "localhost",
-          port: 8085,
-          pool_name: TestDisconnectPool,
-          pool_size: 1
-        )
+  test "a connected worker stops cleanly" do
+    unique = System.unique_integer([:positive])
+    registry = :"grpc_disconnect_registry_#{unique}"
+    start_supervised!({Registry, keys: :duplicate, name: registry})
 
-      config = put_in(config.connection.ping_interval, nil)
-      config = put_in(config.connection.suppress_connection_errors, true)
-
-      {:ok, worker_pid} =
-        Worker.start_link(
-          config: config,
-          registry_name: :test_registry,
-          pool_name: :test_pool
-        )
-
-      assert Process.alive?(worker_pid)
-
-      # Stop the worker — this should NOT raise FunctionClauseError.
-      # The worker blocks in gun:await_up for ~5s when the emulator is
-      # unreachable, so the stop timeout must exceed the GRPC connection
-      # timeout to avoid a race between the two.
-      result =
-        try do
-          GenServer.stop(worker_pid, :normal, 15_000)
-          :ok
-        rescue
-          error in [FunctionClauseError] -> {:error, error}
-        catch
-          :exit, _reason -> :ok
-        end
-
-      assert result == :ok,
-             "Worker should shutdown cleanly without FunctionClauseError, got: #{inspect(result)}"
-    end
-
-    test "worker handles Gun-based channel cleanup safely" do
-      mock_channel = %GRPC.Channel{
+    {:ok, config} =
+      GrpcConnectionPool.Config.local(
         host: "localhost",
         port: 8085,
-        scheme: "http",
-        adapter: GRPC.Client.Adapters.Gun,
-        adapter_payload: %{conn_pid: spawn(fn -> :timer.sleep(100) end)},
-        cred: nil,
-        ref: make_ref(),
-        codec: GRPC.Codec.Proto,
-        interceptors: [],
-        compressor: nil,
-        accepted_compressors: [],
-        headers: []
-      }
+        pool_name: :"grpc_disconnect_pool_#{unique}",
+        pool_size: 1
+      )
 
-      result =
-        try do
-          case mock_channel do
-            %GRPC.Channel{adapter_payload: %{conn_pid: pid}} when is_pid(pid) ->
-              if Process.alive?(pid) do
-                :gun.close(pid)
-              end
+    config = put_in(config.connection.ping_interval, nil)
 
-              :ok
+    {:ok, worker_pid} =
+      Worker.start_link(config: config, registry_name: registry, pool_name: config.pool.name)
 
-            _ ->
-              :ok
-          end
-        rescue
-          _error -> :ok
-        catch
-          :exit, _reason -> :ok
-        end
+    eventually(fn -> Worker.status(worker_pid) == :connected end, 5_000)
 
-      assert result == :ok,
-             "Gun connection cleanup should work safely, got: #{inspect(result)}"
-    end
+    ref = Process.monitor(worker_pid)
+    assert :ok = GenServer.stop(worker_pid, :normal, 15_000)
+    assert_receive {:DOWN, ^ref, :process, ^worker_pid, :normal}
   end
 end

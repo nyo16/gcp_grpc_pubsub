@@ -15,8 +15,7 @@ defmodule PubsubGrpc.Application do
         endpoint: [
           type: :production,
           host: "pubsub.googleapis.com",
-          port: 443,
-          ssl: []
+          port: 443
         ],
         pool: [
           size: 10,
@@ -26,6 +25,12 @@ defmodule PubsubGrpc.Application do
           keepalive: 30_000,
           ping_interval: 25_000
         ]
+
+  A `:production` endpoint without `:ssl` (or with `ssl: []`) uses verified TLS:
+  the system CA store, peer verification and hostname checking. To adjust it,
+  merge options over those defaults:
+
+      config :pubsub_grpc, :ssl_opts, versions: [:"tlsv1.3"]
 
   ### Emulator Configuration (Development/Testing)
 
@@ -44,9 +49,22 @@ defmodule PubsubGrpc.Application do
           ping_interval: nil  # Disable pinging for emulator
         ]
 
+  The auth token is sent only over TLS connections: a plaintext `:local`
+  endpoint (the emulator) never gets one.
+
+  ### Startup errors
+
+  The application refuses to start, with a message describing the fix, when:
+
+    * `config :pubsub_grpc, GrpcConnectionPool` is present but invalid. It is
+      never silently replaced by production defaults.
+    * an endpoint that is not `type: :local` has no TLS (`:ssl` / `:credentials`),
+      because authentication tokens would be sent in plaintext.
+
   ## Legacy Configuration Support
 
-  The following legacy configuration is still supported:
+  The following legacy configuration is still supported when
+  `config :pubsub_grpc, GrpcConnectionPool` is absent:
 
       # config/config.exs
       config :pubsub_grpc, :default_pool_size, 10
@@ -55,6 +73,15 @@ defmodule PubsubGrpc.Application do
         host: "localhost",
         port: 8085
       ]
+
+  `:emulator` must be a keyword list; any other value is ignored (with a warning)
+  and the production endpoint is used.
+
+  ## Supervising the pool yourself
+
+  Set `config :pubsub_grpc, :start_pool, false` to keep this application from
+  starting the default pool, then add `PubsubGrpc` (see `PubsubGrpc.child_spec/1`)
+  to your own supervision tree.
 
   ## Custom Pools
 
@@ -83,113 +110,55 @@ defmodule PubsubGrpc.Application do
 
   require Logger
 
+  alias PubsubGrpc.Config
+
   @impl true
   def start(_type, _args) do
-    warn_if_emulator_mode()
-    config = build_connection_pool_config()
-
-    children = [
-      PubsubGrpc.Auth.Cache,
-      {GrpcConnectionPool, config}
-    ]
+    env = Application.get_all_env(:pubsub_grpc)
+    resolved = Config.resolve(env)
+    Config.put(resolved)
+    log_config(resolved, env)
 
     opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor, max_restarts: 10]
-    Supervisor.start_link(children, opts)
+    Supervisor.start_link(children(resolved, env), opts)
   end
 
-  defp warn_if_emulator_mode do
-    if Application.get_env(:pubsub_grpc, :emulator) do
+  @doc false
+  @spec children(Config.resolved(), keyword()) :: [Supervisor.child_spec() | module() | tuple()]
+  def children(resolved, env) do
+    pool =
+      if Keyword.get(env, :start_pool, true) == false,
+        do: [],
+        else: [{GrpcConnectionPool, resolved.pool_config}]
+
+    [
+      # Runs auth token fetches for Auth.Cache; must start before it.
+      {Task.Supervisor, name: PubsubGrpc.TaskSupervisor},
+      PubsubGrpc.Auth.Cache
+      | pool
+    ]
+  end
+
+  defp log_config(resolved, env) do
+    case resolved.source do
+      :app_env -> Logger.info("PubsubGrpc: connection pool configured from application env")
+      :legacy -> Logger.info("PubsubGrpc: connection pool configured from legacy config")
+    end
+
+    emulator = Keyword.get(env, :emulator)
+
+    if resolved.source == :legacy and not is_nil(emulator) and not is_list(emulator) do
       Logger.warning(
-        "PubsubGrpc: emulator mode is active — authentication will be skipped. " <>
-          "Remove `config :pubsub_grpc, :emulator, _` for production."
+        "PubsubGrpc: ignoring `config :pubsub_grpc, :emulator, #{inspect(emulator)}`: " <>
+          "it must be a keyword list (host:, port:). Using the production endpoint."
       )
     end
-  end
 
-  # Private functions
-
-  defp build_connection_pool_config do
-    # Try to load from new GrpcConnectionPool configuration first
-    case GrpcConnectionPool.Config.from_env(:pubsub_grpc) do
-      {:ok, config} ->
-        Logger.info("PubsubGrpc: connection pool configured from application env")
-        config
-
-      {:error, reason} ->
-        Logger.debug(
-          "PubsubGrpc: no pool config in env (#{inspect(reason)}), trying legacy config"
-        )
-
-        build_legacy_config()
+    if resolved.endpoint_type == :local do
+      Logger.warning(
+        "PubsubGrpc: endpoint type is :local (emulator) — authentication will be skipped. " <>
+          "Do not use this configuration in production."
+      )
     end
-  end
-
-  # Support legacy configuration format
-  defp build_legacy_config do
-    pool_size = Application.get_env(:pubsub_grpc, :default_pool_size, 5)
-    config_opts = legacy_config_opts(Application.get_env(:pubsub_grpc, :emulator), pool_size)
-
-    case GrpcConnectionPool.Config.new(config_opts) do
-      {:ok, config} ->
-        Logger.info("PubsubGrpc: connection pool configured from legacy config")
-        config
-
-      {:error, reason} ->
-        Logger.error("PubsubGrpc: legacy config failed: #{inspect(reason)}")
-        production_default_config!(pool_size, reason)
-    end
-  end
-
-  defp legacy_config_opts(emulator_opts, pool_size) when is_list(emulator_opts) do
-    [
-      endpoint: [
-        type: :local,
-        host: emulator_opts[:host] || "localhost",
-        port: emulator_opts[:port] || 8085
-      ],
-      pool: [size: pool_size, name: PubsubGrpc.ConnectionPool],
-      # Disable pinging for emulator
-      connection: [ping_interval: nil, health_check: true]
-    ]
-  end
-
-  defp legacy_config_opts(_emulator_opts, pool_size) do
-    [
-      endpoint: [
-        type: :production,
-        host: "pubsub.googleapis.com",
-        port: 443,
-        ssl: production_ssl_opts()
-      ],
-      pool: [size: pool_size, name: PubsubGrpc.ConnectionPool]
-    ]
-  end
-
-  defp production_default_config!(pool_size, reason) do
-    case GrpcConnectionPool.Config.production(
-           host: "pubsub.googleapis.com",
-           port: 443,
-           pool_name: PubsubGrpc.ConnectionPool,
-           pool_size: pool_size
-         ) do
-      {:ok, config} ->
-        Logger.warning("PubsubGrpc: using production defaults after legacy config failure")
-        config
-
-      {:error, fallback_reason} ->
-        raise "PubsubGrpc: unable to build connection pool config " <>
-                "(legacy: #{inspect(reason)}, production default: #{inspect(fallback_reason)})"
-    end
-  end
-
-  # Strict TLS for the production endpoint: verify the server certificate against
-  # the OS trust store. Override via `config :pubsub_grpc, :ssl_opts, [...]`.
-  defp production_ssl_opts do
-    Application.get_env(
-      :pubsub_grpc,
-      :ssl_opts,
-      verify: :verify_peer,
-      cacerts: :public_key.cacerts_get()
-    )
   end
 end

@@ -1,15 +1,48 @@
 defmodule PubsubGrpc.ValidationTest do
   use ExUnit.Case, async: true
 
+  alias Google.Pubsub.V1.PubsubMessage
   alias PubsubGrpc.{Error, Validation}
 
   describe "validate_project_id/1" do
-    test "accepts valid project ID" do
-      assert {:ok, "my-project"} = Validation.validate_project_id("my-project")
+    test "accepts project IDs, project numbers and domain-scoped IDs" do
+      for id <- [
+            "my-project",
+            "test-project-id",
+            "abcdef",
+            "a23456789012345678901234567890",
+            "project-123",
+            "123456789012",
+            "example.com:my-project",
+            "sub.example.co.uk:legacy-app"
+          ] do
+        assert {:ok, ^id} = Validation.validate_project_id(id)
+      end
     end
 
-    test "rejects empty string" do
-      assert {:error, %Error{code: :validation_error}} = Validation.validate_project_id("")
+    test "rejects malformed project IDs" do
+      for id <- [
+            "",
+            "proj",
+            "abcde",
+            "a234567890123456789012345678901",
+            "1project",
+            "-project",
+            "my-project-",
+            "My-Project",
+            "my_project",
+            "my project",
+            "my.project",
+            "example.com:",
+            ":my-project",
+            "example:my-project",
+            "example.com:my-project-",
+            "projects/my-project",
+            "12345678901234567890"
+          ] do
+        assert {:error, %Error{code: :validation_error}} = Validation.validate_project_id(id),
+               "expected #{inspect(id)} to be rejected"
+      end
     end
 
     test "rejects nil" do
@@ -18,6 +51,28 @@ defmodule PubsubGrpc.ValidationTest do
 
     test "rejects non-string" do
       assert {:error, %Error{code: :validation_error}} = Validation.validate_project_id(123)
+    end
+  end
+
+  describe "validate_schema_name/1" do
+    test "accepts a schema ID or a full schema name" do
+      assert {:ok, "my-schema"} = Validation.validate_schema_name("my-schema")
+
+      assert {:ok, "projects/my-project/schemas/my-schema"} =
+               Validation.validate_schema_name("projects/my-project/schemas/my-schema")
+    end
+
+    test "rejects anything else" do
+      for name <- [
+            "",
+            "projects/my-project/topics/my-schema",
+            "projects/proj/schemas/my-schema",
+            "projects/my-project/schemas/",
+            "my-project/schemas/my-schema",
+            nil
+          ] do
+        assert {:error, %Error{code: :validation_error}} = Validation.validate_schema_name(name)
+      end
     end
   end
 
@@ -76,58 +131,74 @@ defmodule PubsubGrpc.ValidationTest do
     end
   end
 
-  describe "validate_messages/1" do
-    test "accepts valid messages with data" do
-      messages = [%{data: "hello"}]
-      assert {:ok, ^messages} = Validation.validate_messages(messages)
+  describe "build_publish_messages/1" do
+    test "accepts messages with data, attributes, or both and builds PubsubMessages" do
+      messages = [
+        %{data: "hello"},
+        %{attributes: %{"key" => "value"}},
+        %{data: "hi", attributes: %{"k" => "v"}},
+        %{data: "", attributes: %{"k" => "v"}}
+      ]
+
+      assert {:ok, built, 4} = Validation.build_publish_messages(messages)
+
+      assert [
+               %PubsubMessage{data: "hello", attributes: %{}},
+               %PubsubMessage{data: "", attributes: %{"key" => "value"}},
+               %PubsubMessage{data: "hi", attributes: %{"k" => "v"}},
+               %PubsubMessage{data: "", attributes: %{"k" => "v"}}
+             ] = built
     end
 
-    test "accepts messages with attributes only" do
-      messages = [%{attributes: %{"key" => "value"}}]
-      assert {:ok, ^messages} = Validation.validate_messages(messages)
+    test "rejects an empty list or a non-list" do
+      assert {:error, %Error{code: :validation_error}} = Validation.build_publish_messages([])
+      assert {:error, %Error{code: :validation_error}} = Validation.build_publish_messages(nil)
     end
 
-    test "accepts messages with both data and attributes" do
-      messages = [%{data: "hello", attributes: %{"key" => "value"}}]
-      assert {:ok, ^messages} = Validation.validate_messages(messages)
+    test "rejects invalid messages" do
+      for message <- [
+            %{foo: "bar"},
+            %{attributes: %{}},
+            %{data: 123},
+            %{data: ""},
+            %{data: "", attributes: %{}},
+            %{data: "x", attributes: [{"k", "v"}]},
+            %{data: 123, attributes: %{"k" => "v"}},
+            "not a map"
+          ] do
+        assert {:error, %Error{code: :validation_error}} =
+                 Validation.build_publish_messages([%{data: "ok"}, message]),
+               "expected #{inspect(message)} to be rejected"
+      end
     end
 
-    test "rejects empty list" do
-      assert {:error, %Error{code: :validation_error}} = Validation.validate_messages([])
+    test "accepts exactly the message-count limit and rejects one more" do
+      limit = Validation.max_publish_messages()
+
+      assert {:ok, _, ^limit} =
+               Validation.build_publish_messages(List.duplicate(%{data: "x"}, limit))
+
+      assert {:error, %Error{code: :validation_error, message: message}} =
+               Validation.build_publish_messages(List.duplicate(%{data: "x"}, limit + 1))
+
+      assert message =~ "#{limit} messages"
     end
 
-    test "rejects nil" do
-      assert {:error, %Error{code: :validation_error}} = Validation.validate_messages(nil)
-    end
+    test "accepts exactly the byte limit (data + attribute keys/values) and rejects one more" do
+      limit = Validation.max_publish_bytes()
+      attributes = %{"key" => "value"}
+      data = String.duplicate("x", limit - byte_size("key") - byte_size("value"))
 
-    test "rejects messages without data or attributes" do
-      assert {:error, %Error{code: :validation_error}} =
-               Validation.validate_messages([%{foo: "bar"}])
-    end
+      assert {:ok, [_], 1} =
+               Validation.build_publish_messages([%{data: data, attributes: attributes}])
 
-    test "rejects messages with empty attributes" do
-      assert {:error, %Error{code: :validation_error}} =
-               Validation.validate_messages([%{attributes: %{}}])
-    end
+      assert {:error, %Error{code: :validation_error, message: message}} =
+               Validation.build_publish_messages([
+                 %{data: data, attributes: attributes},
+                 %{data: "y"}
+               ])
 
-    test "rejects non-binary data" do
-      assert {:error, %Error{code: :validation_error}} =
-               Validation.validate_messages([%{data: 123}])
-    end
-
-    test "rejects messages with empty data binary" do
-      assert {:error, %Error{code: :validation_error}} =
-               Validation.validate_messages([%{data: ""}])
-    end
-
-    test "rejects messages with empty data AND empty attributes" do
-      assert {:error, %Error{code: :validation_error}} =
-               Validation.validate_messages([%{data: "", attributes: %{}}])
-    end
-
-    test "accepts empty data when attributes are non-empty" do
-      messages = [%{data: "", attributes: %{"k" => "v"}}]
-      assert {:ok, ^messages} = Validation.validate_messages(messages)
+      assert message =~ "#{limit}-byte"
     end
   end
 
@@ -151,6 +222,18 @@ defmodule PubsubGrpc.ValidationTest do
 
     test "rejects list with non-strings" do
       assert {:error, %Error{code: :validation_error}} = Validation.validate_ack_ids([123])
+    end
+
+    test "accepts exactly the request-size limit and rejects one more byte" do
+      limit = Validation.max_ack_request_bytes()
+      at_limit = [String.duplicate("a", limit - 1), "b"]
+
+      assert {:ok, ^at_limit} = Validation.validate_ack_ids(at_limit)
+
+      assert {:error, %Error{code: :validation_error, message: message}} =
+               Validation.validate_ack_ids(at_limit ++ ["c"])
+
+      assert message =~ "#{limit}-byte"
     end
   end
 
@@ -210,6 +293,13 @@ defmodule PubsubGrpc.ValidationTest do
 
     test "rejects negative" do
       assert {:error, %Error{code: :validation_error}} = Validation.validate_max_messages(-1)
+    end
+
+    test "accepts the int32 maximum and rejects one more" do
+      assert {:ok, 2_147_483_647} = Validation.validate_max_messages(2_147_483_647)
+
+      assert {:error, %Error{code: :validation_error}} =
+               Validation.validate_max_messages(2_147_483_648)
     end
   end
 
