@@ -2,6 +2,8 @@ defmodule PubsubGrpcConnectionTest do
   # Each test gets its own pool, so the application's pool is never stopped.
   use ExUnit.Case, async: true
 
+  import PubsubGrpc.Eventually, only: [eventually: 1]
+
   alias PubsubGrpc.{Client, Error}
 
   @moduletag :integration
@@ -25,7 +27,8 @@ defmodule PubsubGrpcConnectionTest do
   end
 
   test "the application pool serves requests on the default path" do
-    assert %{status: :healthy} = Client.status()
+    # Only one connection is awaited at startup (test_helper.exs); :healthy needs all.
+    eventually(fn -> Client.status().status == :healthy end)
     assert {:ok, %{topics: topics}} = PubsubGrpc.list_topics("test-project-id")
     assert is_list(topics)
   end
@@ -61,8 +64,14 @@ defmodule PubsubGrpcConnectionTest do
   end
 
   test "status/1 reports a healthy dedicated pool", %{pool: pool} do
-    assert %{pool_name: ^pool, status: :healthy, current_size: 2, expected_size: 2} =
-             Client.status(pool: pool)
+    # await_ready/2 returns once one channel is up; :healthy needs all of them.
+    status =
+      eventually(fn ->
+        status = Client.status(pool: pool)
+        status.current_size == 2 && status
+      end)
+
+    assert %{pool_name: ^pool, status: :healthy, current_size: 2, expected_size: 2} = status
   end
 
   test "public API calls can target a dedicated pool", %{pool: pool} do

@@ -89,12 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkouts don't persist credentials, `mix deps.get --check-locked` in every job, publish
   gated by the `hex` environment, the CI emulator binds to 127.0.0.1, compile/test matrix
   on Elixir 1.18.4/OTP 27.3 and 1.19.3/OTP 28.1.
-- **CI runs the integration tests**: the CI emulator used `google/cloud-sdk:489.0.0-stable`,
-  which has no Java or pubsub-emulator component, so it exited at once and the test helper
-  silently skipped every integration test. CI now uses `489.0.0-emulators`, waits until the
-  emulator answers HTTP (failing the step, with its logs, otherwise), runs the suite once
-  (`mix coveralls.html`), and `test/test_helper.exs` raises instead of skipping when `CI`
-  is set and the emulator is unreachable.
 - **Emulator**: docker-compose, `mix emulator.start` and the README use
   `google/cloud-sdk:489.0.0-emulators` bound to `127.0.0.1:8085`.
 - **Dev deps**: `ex_doc ~> 0.40`; added `dialyxir ~> 1.4`.
@@ -120,6 +114,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now `:ok | {:error, code}` (was `:ok | :error`). Update handlers that match on `:error`.
 
 ### Fixed
+- **Emulator image**: CI, docker-compose, `mix emulator.start`, the README and the test
+  helper's hint pinned `google/cloud-sdk:489.0.0-stable`, which has no Java and no
+  pubsub-emulator component, so `gcloud beta emulators pubsub start` exited at once. They
+  now use `google/cloud-sdk:489.0.0-emulators`, still bound to `127.0.0.1:8085`.
+- **CI runs the integration tests**: with no emulator, the test helper silently skipped
+  them. The CI step now waits until the emulator answers HTTP (failing, with its logs,
+  otherwise), the suite runs once (`mix coveralls.html`), and `test/test_helper.exs`
+  raises instead of skipping when `CI` is set and the emulator is unreachable.
 - **The telemetry docs now match the emitted metadata**: the `PubsubGrpc.Telemetry`
   moduledoc lists the exact keys for each operation. For example, `pull` carries
   `:max_messages`, not `:message_count`, and the docs now also list `:ack_count`,
