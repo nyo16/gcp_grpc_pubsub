@@ -8,6 +8,8 @@ defmodule PubsubGrpc.AuthTest do
   alias PubsubGrpc.Auth.{Cache, CLI}
 
   @env_keys [:token_fetcher, :goth, :auth_timeout]
+  # Cross-process events (caller -> Cache -> fetch task) took up to 184 ms under CPU starvation.
+  @cross_process_timeout 5_000
 
   setup do
     saved = Map.new(@env_keys, &{&1, Application.fetch_env(:pubsub_grpc, &1)})
@@ -173,7 +175,7 @@ defmodule PubsubGrpc.AuthTest do
       attach_auth_stop_handler()
 
       callers = for _ <- 1..50, do: Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, fetch_pid}
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
       eventually(fn -> waiter_count() == 50 end)
       send(fetch_pid, :release)
 
@@ -190,15 +192,14 @@ defmodule PubsubGrpc.AuthTest do
       put_fetcher(blocking_fetcher(:counters.new(1, []), :never_released))
 
       callers = for _ <- 1..10, do: Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, fetch_pid}
-      ref = Process.monitor(fetch_pid)
 
       for result <- Task.await_many(callers) do
         assert {:error, %Error{code: :deadline_exceeded}} = result
       end
 
-      # The timed-out fetch task is terminated.
-      assert_receive {:DOWN, ^ref, :process, ^fetch_pid, _}
+      # The timed-out fetch task is terminated after the waiters got their reply. Under CPU
+      # starvation the 100 ms timer can fire before the task even runs, so its start is not
+      # awaited; the task is gone either way.
       eventually(fn -> Task.Supervisor.children(PubsubGrpc.TaskSupervisor) == [] end)
     end
 
@@ -207,9 +208,7 @@ defmodule PubsubGrpc.AuthTest do
       old_cache = Process.whereis(Cache)
 
       caller = Task.async(&Auth.get_token/0)
-      # The fetch starts three process hops away (caller -> Cache -> TaskSupervisor task).
-      # Under CPU starvation that took up to 184 ms, past assert_receive's 100 ms default.
-      assert_receive {:fetch_started, fetch_pid}, 5_000
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
       eventually(fn -> waiter_count() == 1 end)
 
       Process.exit(old_cache, :kill)
@@ -236,7 +235,7 @@ defmodule PubsubGrpc.AuthTest do
       put_fetcher(blocking_fetcher(counter, :never_released))
 
       callers = for _ <- 1..5, do: Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, fetch_pid}
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
       eventually(fn -> waiter_count() == 5 end)
 
       Process.exit(fetch_pid, :kill)
@@ -332,7 +331,7 @@ defmodule PubsubGrpc.AuthTest do
       put_fetcher(blocking_fetcher(:counters.new(1, []), {:ok, "Bearer stale", 60_000}))
 
       caller = Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, fetch_pid}
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
       eventually(fn -> waiter_count() == 1 end)
 
       assert :ok = Auth.clear_cache()
@@ -362,13 +361,13 @@ defmodule PubsubGrpc.AuthTest do
       end)
 
       before_clear = Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, 1, first_fetch}
+      assert_receive {:fetch_started, 1, first_fetch}, @cross_process_timeout
       eventually(fn -> waiter_count() == 1 end)
 
       assert :ok = Auth.clear_cache()
 
       after_clear = Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, 2, second_fetch}
+      assert_receive {:fetch_started, 2, second_fetch}, @cross_process_timeout
 
       send(second_fetch, :release)
       assert {:ok, "Bearer 2"} = Task.await(after_clear)
@@ -540,25 +539,21 @@ defmodule PubsubGrpc.AuthTest do
       end)
     end
 
-    test "a hung gcloud is killed by the CLI's own deadline, before the Cache timer" do
-      # auth_timeout 750 -> CLI deadline 500 ms; the Cache backstop fires at 750.
-      dir = tmp_dir()
-      pid_file = Path.join(dir, "gcloud.pid")
-      fake_gcloud("echo $$ > #{pid_file}\nexec sleep #{unique_sleep_arg()}\n")
+    test "a hung gcloud gives :deadline_exceeded and its OS process is killed" do
+      # auth_timeout 750 -> CLI deadline 500 ms; the Cache backstop fires at 750. Which one
+      # wins depends on scheduling, so only what both guarantee is asserted. The CLI's own
+      # deadline is covered deterministically in the CLI.run/3 tests below.
+      marker = unique_sleep_arg()
+      fake_gcloud("exec sleep #{marker}\n")
       Application.put_env(:pubsub_grpc, :auth_timeout, 750)
 
-      log =
-        capture_log(fn ->
-          assert {:error, %Error{code: :deadline_exceeded}} = Auth.get_token()
-        end)
+      capture_log(fn ->
+        assert {:error, %Error{code: :deadline_exceeded}} = Auth.get_token()
+      end)
 
-      # Only the in-task CLI deadline path logs this; the Cache timer terminates the
-      # task without it.
-      assert log =~ "gcloud CLI auth timed out"
-
-      # `exec` keeps the shell's PID, so this is the sleep process.
-      os_pid = pid_file |> File.read!() |> String.trim()
-      eventually(fn -> not os_pid_alive?(os_pid) end)
+      # Both paths kill the OS process before the fetch task exits.
+      eventually(fn -> Task.Supervisor.children(PubsubGrpc.TaskSupervisor) == [] end)
+      eventually(fn -> not os_process_running?("sleep #{marker}") end)
       assert :miss = Cache.lookup()
     end
   end
@@ -756,10 +751,5 @@ defmodule PubsubGrpc.AuthTest do
   defp os_process_running?(command) do
     {output, 0} = System.cmd("ps", ["-ax", "-o", "command="])
     output |> String.split("\n") |> Enum.any?(&String.contains?(&1, command))
-  end
-
-  defp os_pid_alive?(os_pid) do
-    {_output, status} = System.cmd("ps", ["-p", os_pid], stderr_to_stdout: true)
-    status == 0
   end
 end
