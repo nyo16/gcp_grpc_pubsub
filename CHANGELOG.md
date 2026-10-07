@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+- **Generated protobuf modules are namespaced under `PubsubGrpc.Proto`**: the vendored
+  `Google.Pubsub.V1.*` modules (messages, enums, `Publisher`/`Subscriber`/`SchemaService`
+  `Service` and `Stub`) are now `PubsubGrpc.Proto.Google.Pubsub.V1.*`, so they no longer
+  clash with another library or app that bundles the same protos. Well-known types are
+  still `Google.Protobuf.*` from the `protobuf` package. The gRPC service names on the wire
+  (`google.pubsub.v1.Publisher`, …) and the protobuf `full_name`s (`google.pubsub.v1.Topic`,
+  …) are unchanged, so requests, JSON and `Any` type URLs are unaffected. The files moved
+  from `lib/google/` to `lib/pubsub_grpc/proto/` and are regenerated with the pinned
+  protoc-gen-elixir 0.17.0 (previously 0.14.1).
+
+  **Migration**: replace `Google.Pubsub.V1.` with `PubsubGrpc.Proto.Google.Pubsub.V1.` in
+  struct literals, pattern matches, typespecs and custom `PubsubGrpc.execute/2` calls, or
+  add `alias PubsubGrpc.Proto.Google.Pubsub.V1` and write `%V1.Topic{}`,
+  `V1.Publisher.Stub`.
+
 ### Added
 - **`PubsubGrpc.child_spec/1` and `config :pubsub_grpc, :start_pool, false`**: host
   applications can keep `:pubsub_grpc` from starting the connection pool and supervise it

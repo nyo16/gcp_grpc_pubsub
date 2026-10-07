@@ -1,8 +1,8 @@
 defmodule PubsubGrpc.Validation do
   @moduledoc false
 
-  alias Google.Pubsub.V1.PubsubMessage
   alias PubsubGrpc.Error
+  alias PubsubGrpc.Proto.Google.Pubsub.V1.PubsubMessage
 
   # Request limits. Byte limits use the larger reading of "MB"/"KB" (MiB/KiB) and
   # count only payload bytes, so a request rejected here is always over the

@@ -12,8 +12,8 @@ defmodule PubsubGrpcMainApiTest do
 
   import PubsubGrpc.Eventually
 
-  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.Error
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.Publisher.Stub, as: PublisherStub
 
   @moduletag :integration

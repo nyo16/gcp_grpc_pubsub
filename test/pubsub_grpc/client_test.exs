@@ -8,8 +8,8 @@ defmodule PubsubGrpc.ClientTest do
   import PubsubGrpc.EmulatorHelper,
     only: [unique_resources: 1, topic_path: 1, subscription_path: 1]
 
-  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.Client
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.Publisher.Stub, as: PublisherStub
   alias PubsubV1.Subscriber.Stub, as: SubscriberStub
 

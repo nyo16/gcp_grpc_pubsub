@@ -3,8 +3,8 @@ defmodule PubsubGrpc.Schema do
 
   # Schema operations. Public API and docs: the `PubsubGrpc` delegates.
 
-  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.{Error, Request, Result, Telemetry, Validation}
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.SchemaService.Stub, as: SchemaStub
 
   @spec list_schemas(String.t(), keyword()) ::

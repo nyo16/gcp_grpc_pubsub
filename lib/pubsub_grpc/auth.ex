@@ -116,7 +116,7 @@ defmodule PubsubGrpc.Auth do
 
       PubsubGrpc.execute(fn channel ->
         {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+        PubsubGrpc.Proto.Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end)
 
   """

@@ -29,11 +29,19 @@ TMP_DIR="$DIR/staging_folder"
 echo_info "Working directory: $DIR"
 echo_info "Staging directory: $TMP_DIR"
 
-# protoc-gen-elixir names files <package dir>/<proto path>.pb.ex
-# (google/pubsub/v1/google/pubsub/v1/pubsub.pb.ex), so generate into staging and copy
-# the files flat into lib/google/pubsub/v1/. Only lib/google/ is ever replaced.
+# Modules are generated under PubsubGrpc.Proto.* (package_prefix) so the vendored
+# Google.Pubsub.V1.* protos can't clash with another library bundling the same files.
+# Well-known types (google.protobuf.*) are dependencies, not generated files, so they
+# keep resolving to Google.Protobuf.* from the `protobuf` hex package. Wire service
+# names and full_name metadata stay google.pubsub.v1.*.
+#
+# protoc-gen-elixir names files <module dir>/<proto path>.pb.ex
+# (pubsub_grpc/proto/google/pubsub/v1/google/pubsub/v1/pubsub.pb.ex), so generate into
+# staging and copy the files flat into lib/pubsub_grpc/proto/google/pubsub/v1/.
+# Only lib/pubsub_grpc/proto/ is ever replaced, and only after protoc succeeded.
+PACKAGE_PREFIX="pubsub_grpc.proto"
 GEN_DIR="$TMP_DIR/generated"
-OUT="$DIR/lib/google"
+OUT="$DIR/lib/pubsub_grpc/proto"
 GOOGLEAPIS_PATH="$TMP_DIR/googleapis"
 PROTOC_PATH="$TMP_DIR/protoc-$PROTOC_VERSION"
 PROTOC="$PROTOC_PATH/bin/protoc"
@@ -130,13 +138,15 @@ rm -rf "$GEN_DIR"
 mkdir -p "$GEN_DIR"
 "$PROTOC" -I "$GOOGLEAPIS_PATH" \
     --plugin=protoc-gen-elixir="$PLUGIN_PATH" \
-    --elixir_out=plugins=grpc:"$GEN_DIR" \
+    --elixir_out=plugins=grpc,package_prefix="$PACKAGE_PREFIX":"$GEN_DIR" \
     "$GOOGLEAPIS_PATH"/google/pubsub/v1/*.proto
 
 echo_info "Replacing generated files in $OUT..."
 rm -rf "$OUT"
-mkdir -p "$OUT/pubsub/v1"
-cp "$GEN_DIR"/google/pubsub/v1/google/pubsub/v1/*.pb.ex "$OUT/pubsub/v1/"
+mkdir -p "$OUT/google/pubsub/v1"
+cp "$GEN_DIR"/pubsub_grpc/proto/google/pubsub/v1/google/pubsub/v1/*.pb.ex "$OUT/google/pubsub/v1/"
+# .formatter.exs covers lib/**, so keep the generated files `mix format --check-formatted` clean.
+mix format "$OUT"/google/pubsub/v1/*.pb.ex
 
 echo_info "Protobuf generation completed successfully!"
 echo_info "Generated files are in: $OUT"

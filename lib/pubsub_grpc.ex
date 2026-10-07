@@ -107,28 +107,28 @@ defmodule PubsubGrpc do
 
   """
 
-  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.{Client, Config, Error, Request, Result, Schema, Telemetry, Validation}
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.Publisher.Stub, as: PublisherStub
   alias PubsubV1.Subscriber.Stub, as: SubscriberStub
 
-  @typedoc "A Pub/Sub topic (`%Google.Pubsub.V1.Topic{}`)."
-  @type topic :: %Google.Pubsub.V1.Topic{}
+  @typedoc "A Pub/Sub topic (`%PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}`)."
+  @type topic :: %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}
 
-  @typedoc "A Pub/Sub subscription (`%Google.Pubsub.V1.Subscription{}`)."
-  @type subscription :: %Google.Pubsub.V1.Subscription{}
+  @typedoc "A Pub/Sub subscription (`%PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}`)."
+  @type subscription :: %PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}
 
   @typedoc "A gRPC channel checked out from the pool (`%GRPC.Channel{}`), as passed to `execute/2` callbacks."
   @type channel :: %GRPC.Channel{}
 
-  @typedoc "A Pub/Sub schema (`%Google.Pubsub.V1.Schema{}`)."
-  @type schema :: %Google.Pubsub.V1.Schema{}
+  @typedoc "A Pub/Sub schema (`%PubsubGrpc.Proto.Google.Pubsub.V1.Schema{}`)."
+  @type schema :: %PubsubGrpc.Proto.Google.Pubsub.V1.Schema{}
 
-  @typedoc "Response of `validate_schema/4` (`%Google.Pubsub.V1.ValidateSchemaResponse{}`)."
-  @type validate_schema_response :: %Google.Pubsub.V1.ValidateSchemaResponse{}
+  @typedoc "Response of `validate_schema/4` (`%PubsubGrpc.Proto.Google.Pubsub.V1.ValidateSchemaResponse{}`)."
+  @type validate_schema_response :: %PubsubGrpc.Proto.Google.Pubsub.V1.ValidateSchemaResponse{}
 
-  @typedoc "Response of `validate_message/5` and `validate_message_with_schema/6` (`%Google.Pubsub.V1.ValidateMessageResponse{}`)."
-  @type validate_message_response :: %Google.Pubsub.V1.ValidateMessageResponse{}
+  @typedoc "Response of `validate_message/5` and `validate_message_with_schema/6` (`%PubsubGrpc.Proto.Google.Pubsub.V1.ValidateMessageResponse{}`)."
+  @type validate_message_response :: %PubsubGrpc.Proto.Google.Pubsub.V1.ValidateMessageResponse{}
 
   @typedoc "A schema type: Protocol Buffer or Avro."
   @type schema_type :: :protocol_buffer | :avro
@@ -160,7 +160,7 @@ defmodule PubsubGrpc do
   - `opts` - [common options](#module-common-options)
 
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Topic{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :already_exists}}` if topic exists
   - `{:error, %PubsubGrpc.Error{}}` on other errors
 
@@ -190,7 +190,7 @@ defmodule PubsubGrpc do
   Accepts the [common options](#module-common-options).
 
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Topic{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :not_found}}` if topic doesn't exist
 
   """
@@ -416,7 +416,7 @@ defmodule PubsubGrpc do
   Accepts the [common options](#module-common-options).
 
   ## Returns
-  - `{:ok, %Google.Pubsub.V1.Subscription{}}` on success
+  - `{:ok, %PubsubGrpc.Proto.Google.Pubsub.V1.Subscription{}}` on success
   - `{:error, %PubsubGrpc.Error{code: :not_found}}` if subscription doesn't exist
 
   """
@@ -519,7 +519,7 @@ defmodule PubsubGrpc do
   - `opts` - [common options](#module-common-options)
 
   ## Returns
-  - `{:ok, [%Google.Pubsub.V1.ReceivedMessage{}]}`
+  - `{:ok, [%PubsubGrpc.Proto.Google.Pubsub.V1.ReceivedMessage{}]}`
 
   """
   @spec pull(String.t(), String.t(), pos_integer(), keyword()) ::
@@ -691,9 +691,9 @@ defmodule PubsubGrpc do
   ## Examples
 
       operation = fn channel ->
-        request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
+        request = %PubsubGrpc.Proto.Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
         {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+        PubsubGrpc.Proto.Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
       end
 
       {:ok, topic} = PubsubGrpc.execute(operation)

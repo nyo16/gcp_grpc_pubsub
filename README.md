@@ -230,11 +230,13 @@ GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
 
 # Custom gRPC call on a pooled channel (advanced): errors are normalized to
 # %PubsubGrpc.Error{}, and the auth token is attached only over TLS
+alias PubsubGrpc.Proto.Google.Pubsub.V1
+
 {:ok, topic} =
   PubsubGrpc.execute(fn channel ->
     {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
-    request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/#{project_id}/topics/#{topic_id}"}
-    Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+    request = %V1.GetTopicRequest{topic: "projects/#{project_id}/topics/#{topic_id}"}
+    V1.Publisher.Stub.get_topic(channel, request, auth_opts)
   end)
 ```
 

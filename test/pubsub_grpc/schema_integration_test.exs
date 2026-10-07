@@ -9,8 +9,8 @@ defmodule PubsubGrpc.SchemaIntegrationTest do
   import PubsubGrpc.EmulatorHelper,
     only: [unique_name: 1, track_schema: 1, schema_path: 1, list_all: 2]
 
-  alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.Error
+  alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
 
   @moduletag :integration
 

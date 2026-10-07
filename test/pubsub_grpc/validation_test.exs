@@ -1,8 +1,8 @@
 defmodule PubsubGrpc.ValidationTest do
   use ExUnit.Case, async: true
 
-  alias Google.Pubsub.V1.PubsubMessage
   alias PubsubGrpc.{Error, Validation}
+  alias PubsubGrpc.Proto.Google.Pubsub.V1.PubsubMessage
 
   describe "validate_project_id/1" do
     test "accepts project IDs, project numbers and domain-scoped IDs" do

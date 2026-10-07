@@ -67,12 +67,16 @@ defmodule PubsubGrpc.ResultTest do
 
   describe "unwrap_list/3" do
     test "extracts the items and the page token" do
-      response = %Google.Pubsub.V1.ListTopicsResponse{
-        topics: [%Google.Pubsub.V1.Topic{name: "t"}],
+      response = %PubsubGrpc.Proto.Google.Pubsub.V1.ListTopicsResponse{
+        topics: [%PubsubGrpc.Proto.Google.Pubsub.V1.Topic{name: "t"}],
         next_page_token: "next"
       }
 
-      assert {:ok, %{topics: [%Google.Pubsub.V1.Topic{name: "t"}], next_page_token: "next"}} =
+      assert {:ok,
+              %{
+                topics: [%PubsubGrpc.Proto.Google.Pubsub.V1.Topic{name: "t"}],
+                next_page_token: "next"
+              }} =
                Result.unwrap_list({:ok, {:ok, response}}, :topics, :next_page_token)
     end
 
