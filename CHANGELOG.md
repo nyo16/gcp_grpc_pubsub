@@ -89,8 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkouts don't persist credentials, `mix deps.get --check-locked` in every job, publish
   gated by the `hex` environment, the CI emulator binds to 127.0.0.1, compile/test matrix
   on Elixir 1.18.4/OTP 27.3 and 1.19.3/OTP 28.1.
-- **Emulator**: docker-compose and `mix emulator.start` use
-  `google/cloud-sdk:489.0.0-stable` bound to `127.0.0.1:8085`.
+- **CI runs the integration tests**: the CI emulator used `google/cloud-sdk:489.0.0-stable`,
+  which has no Java or pubsub-emulator component, so it exited at once and the test helper
+  silently skipped every integration test. CI now uses `489.0.0-emulators`, waits until the
+  emulator answers HTTP (failing the step, with its logs, otherwise), runs the suite once
+  (`mix coveralls.html`), and `test/test_helper.exs` raises instead of skipping when `CI`
+  is set and the emulator is unreachable.
+- **Emulator**: docker-compose, `mix emulator.start` and the README use
+  `google/cloud-sdk:489.0.0-emulators` bound to `127.0.0.1:8085`.
 - **Dev deps**: `ex_doc ~> 0.40`; added `dialyxir ~> 1.4`.
 - **Requirements documented**: Elixir ≥ 1.18 and Erlang/OTP ≥ 27 (cowlib 2.20 needs OTP 27's
   `maybe`; jose 1.11.12, via optional goth, needs OTP 26+).

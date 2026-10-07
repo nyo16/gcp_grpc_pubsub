@@ -210,20 +210,30 @@ jobs:
         with:
           persist-credentials: false
 
+      # The emulator needs the `-emulators` image: `-stable` has neither Java nor the
+      # pubsub-emulator component, so `gcloud beta emulators pubsub start` exits at once.
       - name: Start Pub/Sub emulator
         run: |
           docker run -d --name pubsub-emulator -p 127.0.0.1:8085:8085 \
-            google/cloud-sdk:489.0.0-stable \
+            google/cloud-sdk:489.0.0-emulators \
             bash -c "gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=test-project-id"
-          # Wait for emulator to be ready
-          for i in $(seq 1 30); do
-            if nc -z localhost 8085 2>/dev/null; then
-              echo "Emulator is ready"
-              break
+          # Ready = the emulator answers HTTP (docker-proxy accepts TCP before it listens).
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8085/ >/dev/null 2>&1; then
+              echo "Emulator is ready after ~$((i * 2))s"
+              exit 0
             fi
-            echo "Waiting for emulator... ($i/30)"
+            if [ "$(docker inspect -f '{{.State.Running}}' pubsub-emulator)" != "true" ]; then
+              echo "::error::Pub/Sub emulator container exited"
+              docker logs pubsub-emulator
+              exit 1
+            fi
+            echo "Waiting for emulator... ($i/60)"
             sleep 2
           done
+          echo "::error::Pub/Sub emulator not ready after 120s"
+          docker logs pubsub-emulator
+          exit 1
 
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
@@ -244,9 +254,8 @@ jobs:
       - run: mix deps.compile
       - run: mix compile
 
-      - name: Run tests
-        run: mix test
-
+      # One run: coveralls runs the whole suite and enforces coveralls.json's
+      # minimum_coverage. test_helper.exs fails when CI is set and the emulator is down.
       - name: Run tests with coverage
         run: mix coveralls.html
 

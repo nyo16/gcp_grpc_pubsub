@@ -574,6 +574,16 @@ defmodule PubsubGrpc.AuthTest do
       :ok = Task.Supervisor.terminate_child(PubsubGrpc.TaskSupervisor, task.pid)
       eventually(fn -> not os_process_running?("sleep #{marker}") end)
     end
+
+    test "returns the output of a command that exits before its OS pid is read" do
+      # A command this short often exits, and its port closes, before Port.info/2
+      # runs (seen on Linux); that must not crash the run. Repeated because it is a race.
+      sh = System.find_executable("sh")
+
+      for _ <- 1..100 do
+        assert {:ok, "out\n", 3} = CLI.run(sh, ["-c", "echo out; exit 3"], 5_000)
+      end
+    end
   end
 
   describe "Goth fallback policy" do

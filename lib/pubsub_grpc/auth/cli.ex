@@ -21,7 +21,7 @@ defmodule PubsubGrpc.Auth.CLI do
           args: args
         ])
 
-      {:os_pid, os_pid} = Port.info(port, :os_pid)
+      os_pid = os_pid(port)
       deadline = System.monotonic_time(:millisecond) + timeout
       collect(port, os_pid, deadline, [])
     after
@@ -60,6 +60,15 @@ defmodule PubsubGrpc.Auth.CLI do
     end
   end
 
+  # `nil` when the command already exited and its port closed: its output and exit
+  # status are then already in the mailbox, and there is no OS process to kill.
+  defp os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} -> os_pid
+      nil -> nil
+    end
+  end
+
   defp stop(port, os_pid) do
     kill_os_process(os_pid)
 
@@ -79,6 +88,8 @@ defmodule PubsubGrpc.Auth.CLI do
       0 -> :ok
     end
   end
+
+  defp kill_os_process(nil), do: :ok
 
   defp kill_os_process(os_pid) do
     pid = Integer.to_string(os_pid)

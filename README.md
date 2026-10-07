@@ -398,7 +398,7 @@ docker-compose down
 
 ```bash
 # Start the emulator
-docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-stable /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 
 # Stop with Ctrl+C or docker stop
 ```
@@ -444,7 +444,7 @@ docker-compose up -d
 
 #### Method 3: Direct Docker Command
 ```bash
-docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-stable /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 ```
 
 All methods start the emulator at `localhost:8085` with project ID `test-project-id`.
