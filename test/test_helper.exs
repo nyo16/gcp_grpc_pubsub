@@ -9,8 +9,10 @@ emulator_available? =
       false
   end
 
+# `mix emulator.start` (dev/mix/tasks/, repo checkout only) runs the same container.
 start_hint =
-  "docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators bash -c " <>
+  "mix emulator.start, or: " <>
+    "docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators bash -c " <>
     "\"gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'\""
 
 # Exclude integration tests when the emulator is not running, except in CI (which sets

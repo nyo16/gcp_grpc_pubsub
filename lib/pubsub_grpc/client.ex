@@ -1,29 +1,12 @@
 defmodule PubsubGrpc.Client do
-  @moduledoc """
-  Client module for interacting with Google Cloud Pub/Sub using gRPC connections.
+  @moduledoc false
 
-  This module provides a wrapper around `GrpcConnectionPool` that automatically
-  uses the default connection pool configured for Pub/Sub.
-
-  For most use cases, use the main `PubsubGrpc` module instead, as it provides
-  a higher-level API for common operations.
-
-  ## Examples
-
-      operation = fn channel ->
-        request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/my-project/topics/my-topic"}
-        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
-        Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
-      end
-
-      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation)
-
-  """
+  # Internal: checks out a channel from the pool and runs a callback on it, returning
+  # `{:ok, callback_result}` without normalizing errors or attaching auth. The public
+  # entry point is `PubsubGrpc.execute/2`, which normalizes errors to
+  # `PubsubGrpc.Error`; callbacks get auth options from `PubsubGrpc.Auth.request_opts/1`.
 
   alias PubsubGrpc.Config
-
-  @typedoc "A gRPC channel checked out from the pool (`%GRPC.Channel{}`)."
-  @type channel :: %GRPC.Channel{}
 
   @doc """
   Execute a gRPC operation using a connection from the pool.
@@ -44,17 +27,9 @@ defmodule PubsubGrpc.Client do
   - `{:ok, result}` - Result from the operation function
   - `{:error, reason}` - Error during connection checkout
 
-  ## Examples
-
-      operation = fn channel ->
-        request = %Google.Pubsub.V1.Topic{name: "projects/my-project/topics/test"}
-        Google.Pubsub.V1.Publisher.Stub.create_topic(channel, request, [])
-      end
-
-      {:ok, {:ok, topic}} = PubsubGrpc.Client.execute(operation)
-
+  Internal: use `PubsubGrpc.execute/2`, which normalizes errors to `PubsubGrpc.Error`.
   """
-  @spec execute((channel() -> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec execute((PubsubGrpc.channel() -> term()), keyword()) :: {:ok, term()} | {:error, term()}
   def execute(operation_fn, opts \\ []) when is_function(operation_fn, 1) do
     pool_name = opts[:pool] || Config.pool_name()
 
@@ -85,12 +60,10 @@ defmodule PubsubGrpc.Client do
     ArgumentError -> {:error, :not_connected}
   end
 
-  @doc """
-  Execute a function with a connection from the pool.
-
-  Alias for `execute/2`.
-  """
-  @spec with_connection((channel() -> term()), keyword()) ::
+  # Deprecated rather than only hidden: `@moduledoc false` already hides it from the docs,
+  # but callers from when Client was public need a compile-time pointer to the migration.
+  @deprecated "Use PubsubGrpc.execute/2"
+  @spec with_connection((PubsubGrpc.channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, term()}
   def with_connection(fun, opts \\ []) when is_function(fun, 1) do
     execute(fun, opts)

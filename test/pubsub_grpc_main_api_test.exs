@@ -158,11 +158,11 @@ defmodule PubsubGrpcMainApiTest do
     assert :ok = PubsubGrpc.acknowledge(@project, subscription_name, ack_ids)
   end
 
-  test "with_connection using main API", %{topic_name: topic_name} do
+  test "execute runs a raw stub call with auth options", %{topic_name: topic_name} do
     topic_path = "projects/#{@project}/topics/#{topic_name}"
 
     result =
-      PubsubGrpc.with_connection(fn channel ->
+      PubsubGrpc.execute(fn channel ->
         {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
         PublisherStub.create_topic(channel, %PubsubV1.Topic{name: topic_path}, auth_opts)
       end)
@@ -170,13 +170,16 @@ defmodule PubsubGrpcMainApiTest do
     assert {:ok, %PubsubV1.Topic{name: ^topic_path}} = result
   end
 
-  test "with_connection/execute return {:ok, value} for non-tuple callback results" do
-    assert {:ok, :ok} = PubsubGrpc.with_connection(fn %GRPC.Channel{} -> :ok end)
-
-    assert {:ok, %{answer: 42}} =
-             PubsubGrpc.with_connection(fn %GRPC.Channel{} -> %{answer: 42} end)
-
+  test "execute returns {:ok, value} for non-tuple callback results" do
     assert {:ok, :ok} = PubsubGrpc.execute(fn %GRPC.Channel{} -> :ok end)
+    assert {:ok, %{answer: 42}} = PubsubGrpc.execute(fn %GRPC.Channel{} -> %{answer: 42} end)
+  end
+
+  test "deprecated with_connection/2 still behaves like execute/2" do
+    # apply/3 so the deprecated call doesn't emit a compile-time warning.
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    result = apply(PubsubGrpc, :with_connection, [fn %GRPC.Channel{} -> %{answer: 42} end])
+    assert {:ok, %{answer: 42}} = result
   end
 
   test "execute maps a gRPC error to a structured error" do

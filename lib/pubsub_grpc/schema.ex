@@ -1,26 +1,11 @@
 defmodule PubsubGrpc.Schema do
-  @moduledoc """
-  Schema management for Google Cloud Pub/Sub.
+  @moduledoc false
 
-  Provides functions for managing Pub/Sub schemas, which define the structure
-  and format of messages. Supports Protocol Buffer and Avro formats.
-
-  Every function takes a trailing `opts` keyword list accepting the common
-  options `:timeout` and `:pool` (see the "Common options" section of `PubsubGrpc`).
-  """
+  # Schema operations. Public API and docs: the `PubsubGrpc` delegates.
 
   alias Google.Pubsub.V1, as: PubsubV1
   alias PubsubGrpc.{Error, Request, Result, Telemetry, Validation}
   alias PubsubV1.SchemaService.Stub, as: SchemaStub
-
-  @typedoc "A Pub/Sub schema (`%Google.Pubsub.V1.Schema{}`)."
-  @type schema :: %PubsubV1.Schema{}
-
-  @typedoc "Response of `validate_schema/4` (`%Google.Pubsub.V1.ValidateSchemaResponse{}`)."
-  @type validate_schema_response :: %PubsubV1.ValidateSchemaResponse{}
-
-  @typedoc "Response of `validate_message/5` (`%Google.Pubsub.V1.ValidateMessageResponse{}`)."
-  @type validate_message_response :: %PubsubV1.ValidateMessageResponse{}
 
   @spec list_schemas(String.t(), keyword()) ::
           {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
@@ -49,7 +34,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec get_schema(String.t(), String.t(), keyword()) ::
-          {:ok, schema()} | {:error, Error.t()}
+          {:ok, PubsubGrpc.schema()} | {:error, Error.t()}
   def get_schema(project_id, schema_id, opts \\ []) do
     Telemetry.span(:get_schema, %{project_id: project_id, schema_id: schema_id}, fn ->
       do_get_schema(project_id, schema_id, opts)
@@ -74,7 +59,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t(), keyword()) ::
-          {:ok, schema()} | {:error, Error.t()}
+          {:ok, PubsubGrpc.schema()} | {:error, Error.t()}
   def create_schema(project_id, schema_id, type, definition, opts \\ []) do
     Telemetry.span(
       :create_schema,
@@ -118,7 +103,7 @@ defmodule PubsubGrpc.Schema do
   end
 
   @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t(), keyword()) ::
-          {:ok, validate_schema_response()} | {:error, Error.t()}
+          {:ok, PubsubGrpc.validate_schema_response()} | {:error, Error.t()}
   def validate_schema(project_id, type, definition, opts \\ []) do
     Telemetry.span(:validate_schema, %{project_id: project_id, schema_type: type}, fn ->
       do_validate_schema(project_id, type, definition, opts)
@@ -168,18 +153,8 @@ defmodule PubsubGrpc.Schema do
     end
   end
 
-  @doc """
-  Validates a message against an existing schema by name.
-
-  ## Parameters
-  - `schema_name` - Schema ID, or full name `projects/<project>/schemas/<schema_id>`
-  - `message` - Message bytes to validate
-  - `encoding` - `:json` or `:binary`
-  - `opts` - common options (`:timeout`, `:pool`)
-
-  """
   @spec validate_message(String.t(), String.t(), binary(), :json | :binary, keyword()) ::
-          {:ok, validate_message_response()} | {:error, Error.t()}
+          {:ok, PubsubGrpc.validate_message_response()} | {:error, Error.t()}
   def validate_message(project_id, schema_name, message, encoding, opts \\ []) do
     Telemetry.span(
       :validate_message,
@@ -213,17 +188,6 @@ defmodule PubsubGrpc.Schema do
     end
   end
 
-  @doc """
-  Validates a message against an inline schema definition.
-
-  ## Parameters
-  - `type` - `:protocol_buffer` or `:avro`
-  - `definition` - Schema definition string
-  - `message` - Message bytes to validate
-  - `encoding` - `:json` or `:binary`
-  - `opts` - common options (`:timeout`, `:pool`)
-
-  """
   @spec validate_message_with_schema(
           String.t(),
           :protocol_buffer | :avro,
@@ -232,7 +196,7 @@ defmodule PubsubGrpc.Schema do
           :json | :binary,
           keyword()
         ) ::
-          {:ok, validate_message_response()} | {:error, Error.t()}
+          {:ok, PubsubGrpc.validate_message_response()} | {:error, Error.t()}
   def validate_message_with_schema(project_id, type, definition, message, encoding, opts \\ []) do
     Telemetry.span(
       :validate_message_with_schema,

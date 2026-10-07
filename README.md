@@ -228,8 +228,14 @@ PubsubGrpc.publish(project_id, topic_id, messages)
 # Check pool health
 GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
 
-# Get a channel directly (advanced)
-{:ok, channel} = GrpcConnectionPool.get_channel(PubsubGrpc.ConnectionPool)
+# Custom gRPC call on a pooled channel (advanced): errors are normalized to
+# %PubsubGrpc.Error{}, and the auth token is attached only over TLS
+{:ok, topic} =
+  PubsubGrpc.execute(fn channel ->
+    {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
+    request = %Google.Pubsub.V1.GetTopicRequest{topic: "projects/#{project_id}/topics/#{topic_id}"}
+    Google.Pubsub.V1.Publisher.Stub.get_topic(channel, request, auth_opts)
+  end)
 ```
 
 ## Testing
@@ -363,6 +369,11 @@ mix test --include integration
 
 This project includes multiple ways to run a local Google Cloud Pub/Sub emulator for development and testing.
 
+The `mix emulator.*` tasks live in `dev/mix/tasks/` and are compiled only in the `:dev` and
+`:test` environments of a checkout of this repository. They are not part of the Hex
+package, so projects that depend on `pubsub_grpc` should use Docker Compose or the Docker
+command below.
+
 ### Quick Start
 
 #### Using Mix Commands (Recommended)
@@ -403,9 +414,10 @@ docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/b
 # Stop with Ctrl+C or docker stop
 ```
 
-### Mix Commands
+### Mix Commands (repository checkout only)
 
-The project provides convenient Mix tasks for emulator management:
+A checkout of this repository provides Mix tasks for emulator management
+(`dev/mix/tasks/`, not shipped in the Hex package):
 
 #### `mix emulator.start`
 - Starts the Google Cloud Pub/Sub emulator in a Docker container

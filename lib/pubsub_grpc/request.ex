@@ -16,7 +16,7 @@ defmodule PubsubGrpc.Request do
   Checks out a channel from `opts[:pool]` (default: the configured pool) and
   runs `call/3` on it.
   """
-  @spec execute((Client.channel(), keyword() -> term()), keyword()) ::
+  @spec execute((PubsubGrpc.channel(), keyword() -> term()), keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute(fun, opts) when is_function(fun, 2) do
     Client.execute(&call(&1, fun, opts), pool: opts[:pool], timeout: timeout(opts))
@@ -28,7 +28,8 @@ defmodule PubsubGrpc.Request do
   UNAUTHENTICATED on the configured pool, the token it carried is invalidated
   (only if it is still the cached one).
   """
-  @spec call(Client.channel(), (Client.channel(), keyword() -> term()), keyword()) :: term()
+  @spec call(PubsubGrpc.channel(), (PubsubGrpc.channel(), keyword() -> term()), keyword()) ::
+          term()
   def call(channel, fun, opts) do
     with {:ok, auth_opts} <- Auth.request_opts(channel) do
       result = fun.(channel, auth_opts ++ [timeout: timeout(opts)])

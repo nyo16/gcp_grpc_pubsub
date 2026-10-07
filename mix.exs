@@ -58,7 +58,10 @@ defmodule PubsubGrpc.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  # dev/ holds the repo-only `mix emulator.*` tasks: compiled in :dev and :test, never
+  # in :prod (how dependents compile this library) and not listed in package files.
+  defp elixirc_paths(:test), do: ["lib", "dev", "test/support"]
+  defp elixirc_paths(:dev), do: ["lib", "dev"]
   defp elixirc_paths(_), do: ["lib"]
 
   defp package do

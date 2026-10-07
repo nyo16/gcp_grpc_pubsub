@@ -38,9 +38,9 @@ defmodule PubsubGrpcConnectionTest do
              Client.execute(fn %GRPC.Channel{} -> {:ok, "test_result"} end, pool: pool)
   end
 
-  test "with_connection/2 is an alias for execute/2", %{pool: pool} do
-    assert {:ok, {:ok, "with_connection_works"}} =
-             Client.with_connection(fn _ -> {:ok, "with_connection_works"} end, pool: pool)
+  test "PubsubGrpc.execute/2 honours :pool and unwraps the callback result", %{pool: pool} do
+    assert {:ok, "execute_works"} =
+             PubsubGrpc.execute(fn _ -> {:ok, "execute_works"} end, pool: pool)
   end
 
   test "handles concurrent callers", %{pool: pool} do

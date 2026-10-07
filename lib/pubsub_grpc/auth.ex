@@ -120,7 +120,7 @@ defmodule PubsubGrpc.Auth do
       end)
 
   """
-  @spec request_opts(PubsubGrpc.Client.channel()) :: {:ok, keyword()} | {:error, Error.t()}
+  @spec request_opts(PubsubGrpc.channel()) :: {:ok, keyword()} | {:error, Error.t()}
   def request_opts(%GRPC.Channel{} = channel) do
     if tls?(channel), do: token_opts(), else: {:ok, []}
   end

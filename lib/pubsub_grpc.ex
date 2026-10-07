@@ -118,6 +118,24 @@ defmodule PubsubGrpc do
   @typedoc "A Pub/Sub subscription (`%Google.Pubsub.V1.Subscription{}`)."
   @type subscription :: %Google.Pubsub.V1.Subscription{}
 
+  @typedoc "A gRPC channel checked out from the pool (`%GRPC.Channel{}`), as passed to `execute/2` callbacks."
+  @type channel :: %GRPC.Channel{}
+
+  @typedoc "A Pub/Sub schema (`%Google.Pubsub.V1.Schema{}`)."
+  @type schema :: %Google.Pubsub.V1.Schema{}
+
+  @typedoc "Response of `validate_schema/4` (`%Google.Pubsub.V1.ValidateSchemaResponse{}`)."
+  @type validate_schema_response :: %Google.Pubsub.V1.ValidateSchemaResponse{}
+
+  @typedoc "Response of `validate_message/5` and `validate_message_with_schema/6` (`%Google.Pubsub.V1.ValidateMessageResponse{}`)."
+  @type validate_message_response :: %Google.Pubsub.V1.ValidateMessageResponse{}
+
+  @typedoc "A schema type: Protocol Buffer or Avro."
+  @type schema_type :: :protocol_buffer | :avro
+
+  @typedoc "A message encoding for schema validation."
+  @type encoding :: :json | :binary
+
   @doc """
   Child spec for the Pub/Sub connection pool, configured from the `:pubsub_grpc`
   application env exactly like the pool the application starts by default.
@@ -681,103 +699,180 @@ defmodule PubsubGrpc do
       {:ok, topic} = PubsubGrpc.execute(operation)
 
   """
-  @spec execute((Client.channel() -> term()), keyword()) ::
+  @spec execute((channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, Error.t()}
   def execute(operation_fn, opts \\ []) when is_function(operation_fn, 1) do
     Client.execute(operation_fn, opts) |> Result.unwrap_any()
   end
 
   @doc """
-  Executes multiple operations using the same connection.
+  Same as `execute/2`.
 
-  More efficient when performing several operations in sequence. Return
-  values and `opts` are handled the same way as `execute/2`.
-
-  ## Examples
-
-      result = PubsubGrpc.with_connection(fn channel ->
-        {:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)
-        # ... multiple operations on channel
-      end)
-
+  Deprecated: call `execute/2`, which takes the same callback and options and
+  returns the same values.
   """
-  @spec with_connection((Client.channel() -> term()), keyword()) ::
+  @deprecated "Use PubsubGrpc.execute/2"
+  @spec with_connection((channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, Error.t()}
   def with_connection(fun, opts \\ []) when is_function(fun, 1) do
-    Client.execute(fun, opts) |> Result.unwrap_any()
+    execute(fun, opts)
   end
 
-  # Schema management (delegated)
+  # Schema management (delegated to the internal PubsubGrpc.Schema)
 
   @doc """
   Lists schemas in a project.
 
-  ## Options
-  - `:view` - `:basic` or `:full` (default: `:basic`)
-  - `:page_size` - Maximum number of schemas to return
-  - `:page_token` - Token for pagination
-  - [common options](#module-common-options)
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` (name and type only) or `:full` (with the definition);
+      default `:basic`
+    - `:page_size` - Maximum number of schemas to return (default: server default)
+    - `:page_token` - Token from a previous response's `next_page_token`
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, %{schemas: [schema()], next_page_token: String.t()}}` - `next_page_token`
+    is `""` on the last page
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, %{schemas: schemas}} = PubsubGrpc.list_schemas("my-project", view: :full)
 
   """
+  @spec list_schemas(String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   defdelegate list_schemas(project_id, opts \\ []), to: Schema
 
   @doc """
-  Gets details of a specific schema.
+  Gets a schema.
 
-  ## Options
-  - `:view` - `:basic` or `:full` (default: `:full`)
-  - [common options](#module-common-options)
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` or `:full` (default: `:full`)
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, schema}` - the `t:schema/0`
+  - `{:error, %PubsubGrpc.Error{code: :not_found}}` - the schema does not exist
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, schema} = PubsubGrpc.get_schema("my-project", "my-schema")
 
   """
+  @spec get_schema(String.t(), String.t(), keyword()) :: {:ok, schema()} | {:error, Error.t()}
   defdelegate get_schema(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
-  Creates a new schema.
+  Creates a schema.
 
   ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
   - `type` - `:protocol_buffer` or `:avro`
   - `definition` - The schema definition string
   - `opts` - [common options](#module-common-options)
 
+  ## Returns
+  - `{:ok, schema}` - the created `t:schema/0`
+  - `{:error, %PubsubGrpc.Error{code: :already_exists}}` - the schema ID is taken
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      definition = ~s({"type": "record", "name": "Event", "fields": [{"name": "id", "type": "string"}]})
+      {:ok, schema} = PubsubGrpc.create_schema("my-project", "event", :avro, definition)
+
   """
+  @spec create_schema(String.t(), String.t(), schema_type(), String.t(), keyword()) ::
+          {:ok, schema()} | {:error, Error.t()}
   defdelegate create_schema(project_id, schema_id, type, definition, opts \\ []), to: Schema
 
   @doc """
   Deletes a schema.
 
-  Accepts the [common options](#module-common-options).
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `:ok`
+  - `{:error, %PubsubGrpc.Error{code: :not_found}}` - the schema does not exist
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
+  @spec delete_schema(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
   defdelegate delete_schema(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
-  Validates a schema definition.
+  Validates a schema definition without creating it.
 
-  Accepts the [common options](#module-common-options).
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `type` - `:protocol_buffer` or `:avro`
+  - `definition` - The schema definition string
+  - `opts` - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, response}` - the definition is valid (`t:validate_schema_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the definition is invalid
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
+  @spec validate_schema(String.t(), schema_type(), String.t(), keyword()) ::
+          {:ok, validate_schema_response()} | {:error, Error.t()}
   defdelegate validate_schema(project_id, type, definition, opts \\ []), to: Schema
 
   @doc """
-  Lists revisions of a schema.
+  Lists the revisions of a schema, newest first.
 
-  ## Options
-  - `:view` - `:basic` or `:full` (default: `:basic`)
-  - `:page_size` - Maximum number of revisions to return
-  - `:page_token` - Token for pagination
-  - [common options](#module-common-options)
+  ## Parameters
+  - `project_id` - The Google Cloud project ID
+  - `schema_id` - The schema ID
+  - `opts` - Optional parameters:
+    - `:view` - `:basic` or `:full` (default: `:basic`)
+    - `:page_size` - Maximum number of revisions to return (default: server default)
+    - `:page_token` - Token from a previous response's `next_page_token`
+    - [common options](#module-common-options)
+
+  ## Returns
+  - `{:ok, %{schemas: [schema()], next_page_token: String.t()}}`
+  - `{:error, %PubsubGrpc.Error{}}`
 
   """
+  @spec list_schema_revisions(String.t(), String.t(), keyword()) ::
+          {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   defdelegate list_schema_revisions(project_id, schema_id, opts \\ []), to: Schema
 
   @doc """
   Validates a message against an existing schema.
 
   ## Parameters
+  - `project_id` - The Google Cloud project ID; a bare schema ID is resolved in it
   - `schema_name` - Schema ID, or full name `projects/<project>/schemas/<schema_id>`
   - `message` - Message bytes to validate
   - `encoding` - `:json` or `:binary`
   - `opts` - [common options](#module-common-options)
 
+  ## Returns
+  - `{:ok, response}` - the message is valid (`t:validate_message_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the message does not match
+  - `{:error, %PubsubGrpc.Error{}}`
+
+  ## Examples
+
+      {:ok, _} = PubsubGrpc.validate_message("my-project", "event", ~s({"id": "1"}), :json)
+
   """
+  @spec validate_message(String.t(), String.t(), binary(), encoding(), keyword()) ::
+          {:ok, validate_message_response()} | {:error, Error.t()}
   defdelegate validate_message(project_id, schema_name, message, encoding, opts \\ []),
     to: Schema
 
@@ -785,13 +880,28 @@ defmodule PubsubGrpc do
   Validates a message against an inline schema definition.
 
   ## Parameters
+  - `project_id` - The Google Cloud project ID
   - `type` - `:protocol_buffer` or `:avro`
   - `definition` - Schema definition string
   - `message` - Message bytes to validate
   - `encoding` - `:json` or `:binary`
   - `opts` - [common options](#module-common-options)
 
+  ## Returns
+  - `{:ok, response}` - the message is valid (`t:validate_message_response/0`)
+  - `{:error, %PubsubGrpc.Error{code: :invalid_argument}}` - the message or definition
+    is invalid
+  - `{:error, %PubsubGrpc.Error{}}`
+
   """
+  @spec validate_message_with_schema(
+          String.t(),
+          schema_type(),
+          String.t(),
+          binary(),
+          encoding(),
+          keyword()
+        ) :: {:ok, validate_message_response()} | {:error, Error.t()}
   defdelegate validate_message_with_schema(
                 project_id,
                 type,

@@ -4,7 +4,7 @@ defmodule PubsubGrpc.Telemetry do
 
   ## Request events
 
-  Every public operation of `PubsubGrpc` and `PubsubGrpc.Schema` is wrapped in a
+  Every public operation of `PubsubGrpc` (including the schema functions) is wrapped in a
   `:telemetry.span/3` with the prefix `[:pubsub_grpc, :request]`:
 
     * `[:pubsub_grpc, :request, :start]` — measurements `%{system_time: integer, monotonic_time: integer}`
@@ -12,8 +12,7 @@ defmodule PubsubGrpc.Telemetry do
     * `[:pubsub_grpc, :request, :exception]` — emitted when the operation raises
 
   Events are emitted for every call, including calls rejected by input
-  validation. `PubsubGrpc.execute/2` and `PubsubGrpc.with_connection/2` emit no
-  events.
+  validation. `PubsubGrpc.execute/2` emits no events.
 
   ### Metadata
 

@@ -85,8 +85,11 @@ defmodule PubsubGrpc.ClientTest do
              Client.execute(&SubscriberStub.acknowledge(&1, ack))
   end
 
-  test "with_connection/2 behaves like execute/2" do
-    assert {:ok, {:ok, :value}} = Client.with_connection(fn %GRPC.Channel{} -> {:ok, :value} end)
+  test "deprecated with_connection/2 behaves like execute/2" do
+    # apply/3 so the deprecated call doesn't emit a compile-time warning.
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    result = apply(Client, :with_connection, [fn %GRPC.Channel{} -> {:ok, :value} end])
+    assert {:ok, {:ok, :value}} = result
   end
 
   test "status/1 reports the application pool" do

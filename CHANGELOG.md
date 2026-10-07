@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   more than 512 KiB of ack IDs; `pull/4` rejects a `max_messages` above the int32 maximum
   (it used to raise during encoding). Each returns `:validation_error` naming the limit.
 - **Connection checkout retry**: when no pooled connection is ready (`:not_connected`),
-  `PubsubGrpc.Client.execute/2` and every operation wait up to `min(timeout, 2 s)` for one
+  `PubsubGrpc.execute/2` and every operation wait up to `min(timeout, 2 s)` for one
   and retry once, instead of failing immediately after startup or during a reconnect.
 - **New `:auth_timeout` config** (`config :pubsub_grpc, :auth_timeout, ms`, a positive
   integer, default `10_000`, read at runtime): the maximum time for one auth token fetch
@@ -112,6 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers, not public API. The attachable events are unchanged.
 - **Auth telemetry `:result` shape**: `[:pubsub_grpc, :auth, :stop]` metadata `:result` is
   now `:ok | {:error, code}` (was `:ok | :error`). Update handlers that match on `:error`.
+- **PubsubGrpc.Schema is internal** (`@moduledoc false`); its functions still work. Migration: call the documented `PubsubGrpc.*_schema*`/`validate_message*` delegates (same arguments and results).
+- **PubsubGrpc.Client is internal** (`@moduledoc false`); its functions still work. Migration: use `PubsubGrpc.execute/2` (errors normalized to `PubsubGrpc.Error`) with `PubsubGrpc.Auth.request_opts/1` for auth options.
+- **Public types moved to `PubsubGrpc`**: `PubsubGrpc.Client.channel/0` → `t:PubsubGrpc.channel/0`; `PubsubGrpc.Schema.schema/0`, `validate_schema_response/0`, `validate_message_response/0` → `t:PubsubGrpc.schema/0`, `t:PubsubGrpc.validate_schema_response/0`, `t:PubsubGrpc.validate_message_response/0`. Migration: rename the types in your specs.
+
+### Deprecated
+- `PubsubGrpc.with_connection/2`. Migration: call `PubsubGrpc.execute/2` (same callback, options and results).
+- PubsubGrpc.Client.with_connection/2. Migration: call `PubsubGrpc.execute/2` (returns normalized errors instead of `{:ok, callback_result}`).
 
 ### Fixed
 - **Emulator image**: CI, docker-compose, `mix emulator.start`, the README and the test
@@ -132,16 +139,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (The `:result` shape change is listed under Changed.)
 - **Typespecs no longer reference GRPC.Channel.t/0 / GRPC.RPCError.t/0**, which grpc
   1.0.3+ removed and which caused Dialyzer `unknown_type` warnings for consumers. Specs now
-  use new public struct types: `t:PubsubGrpc.Client.channel/0`,
+  use new public struct types: `t:PubsubGrpc.channel/0`,
   `t:PubsubGrpc.Error.grpc_error/0`, `t:PubsubGrpc.topic/0`, `t:PubsubGrpc.subscription/0`,
-  `t:PubsubGrpc.Schema.schema/0`, `t:PubsubGrpc.Schema.validate_schema_response/0` and
-  `t:PubsubGrpc.Schema.validate_message_response/0`.
+  `t:PubsubGrpc.schema/0`, `t:PubsubGrpc.validate_schema_response/0` and
+  `t:PubsubGrpc.validate_message_response/0`.
 - **`PubsubGrpc.execute/2` and `PubsubGrpc.with_connection/2` no longer raise** when the
   callback returns something other than `{:ok, _}` / `{:error, _}` (e.g. `:ok` or a map).
   Such values are now returned as `{:ok, value}`; `{:ok, result}` and `{:error, reason}`
   callback results are normalized as before.
 - Doc examples for `PubsubGrpc.execute/2`, `PubsubGrpc.with_connection/2` and
-  `PubsubGrpc.Client` now unwrap `{:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)`
+  PubsubGrpc.Client now unwrap `{:ok, auth_opts} = PubsubGrpc.Auth.request_opts(channel)`
   instead of passing the `{:ok, opts}` tuple (or no auth) as request options.
 - **Token-refresh stampede**: on a cache miss, concurrent callers no longer each fetch a
   token. Exactly one fetch runs at a time and every caller waiting on it gets its
@@ -178,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the anchors allowed one).
 - `PubsubGrpc.Auth.get_token/0` returns `{:error, %PubsubGrpc.Error{}}` instead of exiting
   when the token cache process is unavailable (for example while it restarts).
-- **The configured pool name is used everywhere**: `PubsubGrpc.Client` and every API
+- **The configured pool name is used everywhere**: `PubsubGrpc.execute/2` and every API
   function default to the pool named in `config :pubsub_grpc, GrpcConnectionPool`
   (`pool: [name: ...]`). A config without a pool name now starts the pool as
   `PubsubGrpc.ConnectionPool`. Before, it started under the dependency's default name,
@@ -188,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README "Viewing Logs" code block; `LICENSE` is included in the generated docs.
 
 ### Removed
+- **`mix emulator.start` / `mix emulator.stop` are no longer in the Hex package** (they registered in every dependent project); they moved to `dev/mix/tasks/` and exist only in a checkout of this repository. Migration: start the emulator with `docker-compose up -d` or the `docker run` command in the README.
 - PubsubGrpc.Auth.init_cache/0 (undocumented, `@doc false`). The token table is created
   and owned by the internal PubsubGrpc.Auth.Cache process, which the application starts.
 
@@ -348,7 +356,7 @@ end
 - Added `GRPC.Client.Supervisor` to application supervision tree (required by grpc 0.11.5)
 
 ### Internal
-- Updated `PubsubGrpc.Client.execute/2` to use new `GrpcConnectionPool.get_channel/1` API
+- Updated PubsubGrpc.Client.execute/2 to use new `GrpcConnectionPool.get_channel/1` API
 - Improved test initialization sequence to ensure emulator is ready before pool connections
 - Updated tests to work with new pool architecture
 
