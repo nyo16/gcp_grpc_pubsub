@@ -207,7 +207,9 @@ defmodule PubsubGrpc.AuthTest do
       old_cache = Process.whereis(Cache)
 
       caller = Task.async(&Auth.get_token/0)
-      assert_receive {:fetch_started, fetch_pid}
+      # The fetch starts three process hops away (caller -> Cache -> TaskSupervisor task).
+      # Under CPU starvation that took up to 184 ms, past assert_receive's 100 ms default.
+      assert_receive {:fetch_started, fetch_pid}, 5_000
       eventually(fn -> waiter_count() == 1 end)
 
       Process.exit(old_cache, :kill)
@@ -215,8 +217,16 @@ defmodule PubsubGrpc.AuthTest do
       assert {:error, %Error{code: :unauthenticated}} = Task.await(caller)
 
       Process.exit(fetch_pid, :kill)
-      eventually(fn -> Process.whereis(Cache) not in [nil, old_cache] end)
-      assert :ets.info(Cache.table(), :owner) == Process.whereis(Cache)
+
+      new_cache =
+        eventually(fn ->
+          pid = Process.whereis(Cache)
+          pid not in [nil, old_cache] && pid
+        end)
+
+      # The name is registered before init/1 creates the table; wait for init to finish.
+      _ = :sys.get_state(new_cache)
+      assert :ets.info(Cache.table(), :owner) == new_cache
     end
 
     test "a fetch task killed from outside releases every waiter at once" do
