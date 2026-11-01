@@ -18,14 +18,13 @@ High-performance Google Cloud Pub/Sub client using gRPC with connection pooling.
 ```elixir
 def deps do
   [
-    {:pubsub_grpc, "~> 0.6.0"}
+    {:pubsub_grpc, "~> 0.7.0"}
   ]
 end
 ```
 
-**Requirements:** Elixir ≥ 1.18 and Erlang/OTP ≥ 27. Elixir 1.18 itself supports OTP 25, but
-the dependency tree does not build there: cowlib 2.20 uses OTP 27's `maybe` expression, and
-jose 1.11.12 (pulled in by the optional `goth`) needs OTP 26+.
+**Requirements:** Elixir ≥ 1.19 and Erlang/OTP ≥ 28. CI runs Elixir 1.19 on OTP 28 and
+Elixir 1.20 on OTP 29.1.
 
 ## Quick Start
 

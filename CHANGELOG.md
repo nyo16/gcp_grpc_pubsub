@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-31
+
+### Breaking Changes
+- **Minimum supported toolchain is now Elixir 1.19 and Erlang/OTP 28** (was Elixir 1.18 /
+  OTP 27). `mix.exs` requires `elixir: "~> 1.19"`.
+
+### Added
+- **CI runs on Elixir 1.20 / OTP 29.1** alongside the Elixir 1.19 / OTP 28 floor. The
+  single-version jobs (format, credo, dialyzer, audit, publish) use Elixir 1.20.5 / OTP 29.1.
+
+### Changed
+- **The `grpc_connection_pool` requirement is raised to `~> 0.5.4`** (was `~> 0.5.3`). 0.5.4
+  has no code change; its release notes ask downstream projects to bump these advisory
+  fixes in their own locks:
+  - `cowlib` 2.20.0 → 2.21.0 (runtime, via gun) fixes CVE-2026-43969 (Cookie header
+    injection in `cow_cookie:cookie/1`), so `EEF-CVE-2026-43969` is dropped from
+    `ignore_advisories` in `mix.exs`. CVE-2026-43966 is still open upstream and stays
+    accepted; the gun ≥ 2.4 mitigation still applies.
+  - `protobuf` 0.17.0 → 0.17.1 (runtime, via grpc_core) fixes CVE-2026-104635 (unbounded
+    recursion in `Protobuf.JSON` decoding). Binary decoding, which gRPC uses, is unchanged.
+  - `jose` 1.11.12 → 1.11.13 (via the optional `goth`) fixes CVE-2026-65625 through
+    CVE-2026-65632.
+
+  Consumers should run `mix deps.update grpc_connection_pool cowlib protobuf jose`.
+
 ## [0.6.0] - 2026-10-08
 
 ### Breaking Changes

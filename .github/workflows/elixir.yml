@@ -15,8 +15,8 @@ env:
   MIX_ENV: test
   # Current toolchain (matches .tool-versions). Single-version jobs use this;
   # compile/test also run the supported floor via their matrix.
-  ELIXIR_VERSION: "1.19.3"
-  OTP_VERSION: "28.1"
+  ELIXIR_VERSION: "1.20.5"
+  OTP_VERSION: "29.1"
 
 jobs:
   compile:
@@ -26,12 +26,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Floor: lowest Elixir allowed by `elixir: "~> 1.18"` with the lowest OTP the locked
-          # deps compile on (cowlib 2.20 needs OTP 27's `maybe`; jose 1.11.12 needs OTP 26+).
-          - elixir: "1.18.4"
-            otp: "27.3"
+          # Floor: lowest supported Elixir (`elixir: "~> 1.19"`) and OTP.
           - elixir: "1.19.3"
             otp: "28.1"
+          - elixir: "1.20.5"
+            otp: "29.1"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -200,10 +199,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - elixir: "1.18.4"
-            otp: "27.3"
           - elixir: "1.19.3"
             otp: "28.1"
+          - elixir: "1.20.5"
+            otp: "29.1"
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
