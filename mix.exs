@@ -1,14 +1,14 @@
 defmodule PubsubGrpc.MixProject do
   use Mix.Project
 
-  @version "0.6.0"
+  @version "0.7.0"
   @source_url "https://github.com/nyo16/gcp_grpc_pubsub"
 
   def project do
     [
       app: :pubsub_grpc,
       version: @version,
-      elixir: "~> 1.18",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       test_coverage: [tool: ExCoveralls],
@@ -23,7 +23,7 @@ defmodule PubsubGrpc.MixProject do
       # by grpc's gun adapter and the vulnerable code paths are not reachable from this library.
       # Review this list on every dependency bump (stale entries only warn).
       hex: [
-        ignore_advisories: ["EEF-CVE-2026-43966", "EEF-CVE-2026-43969", "GHSA-w4f7-4cxr-rv3c"]
+        ignore_advisories: ["EEF-CVE-2026-43966", "GHSA-w4f7-4cxr-rv3c"]
       ],
 
       # Docs
@@ -79,7 +79,7 @@ defmodule PubsubGrpc.MixProject do
 
   defp deps do
     [
-      {:grpc_connection_pool, "~> 0.5.3"},
+      {:grpc_connection_pool, "~> 0.5.4"},
       {:telemetry, "~> 1.0"},
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
