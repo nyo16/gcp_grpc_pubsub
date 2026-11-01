@@ -6,12 +6,15 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [master]
+  # Weekly run so new advisories against locked deps surface without a push.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   MIX_ENV: test
   # Current toolchain (matches .tool-versions). Single-version jobs use this;
   # compile/test also run the supported floor via their matrix.
@@ -56,6 +59,10 @@ jobs:
 
       - name: Compile with warnings as errors
         run: mix compile --warnings-as-errors
+
+      # Goth is an optional dependency: consumers without it must compile cleanly too.
+      - name: Compile without optional deps
+        run: mix compile --no-optional-deps --force --warnings-as-errors
 
   format:
     name: Formatting
@@ -136,7 +143,7 @@ jobs:
       # PLT filenames embed the exact OTP/Elixir versions, so key on setup-beam's resolved outputs.
       - name: Restore PLT cache
         id: plt_cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: priv/plts
           key: ${{ runner.os }}-plt-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock') }}
@@ -150,7 +157,7 @@ jobs:
       # Saved separately so the PLT is kept even when dialyzer reports warnings.
       - name: Save PLT cache
         if: steps.plt_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: priv/plts
           key: ${{ steps.plt_cache.outputs.cache-primary-key }}
@@ -191,6 +198,17 @@ jobs:
       - name: Check retired packages & security advisories
         run: mix hex.audit
 
+      # mix.exs ignores CVE-2026-43966 (cowlib 2.21.0 / gun). A newer cowlib release may fix it:
+      # fail so the ignore list gets reviewed.
+      - name: Review ignored advisories when cowlib > 2.21.0 is released
+        run: |
+          # Capture first: mix crashes with EPIPE if the reader closes the pipe early.
+          COWLIB_INFO=$(mix hex.info cowlib)
+          COWLIB_LATEST=$(printf '%s\n' "$COWLIB_INFO" | awk '/^Recent releases:/{f=1;next} f&&/^[[:space:]]+[0-9]/{print $1;next} f{f=0}' | sort -V | tail -n1)
+          echo "cowlib latest: $COWLIB_LATEST"
+          [ -n "$COWLIB_LATEST" ] || { echo "::error::Could not parse cowlib releases from mix hex.info"; exit 1; }
+          printf '%s\n' "$COWLIB_LATEST" 2.21.0 | sort -V -C || { echo "::error::cowlib $COWLIB_LATEST > 2.21.0 is out: review hex ignore_advisories in mix.exs"; exit 1; }
+
   test:
     name: Tests (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
@@ -211,10 +229,11 @@ jobs:
 
       # The emulator needs the `-emulators` image: `-stable` has neither Java nor the
       # pubsub-emulator component, so `gcloud beta emulators pubsub start` exits at once.
+      # Image pin: keep in sync with docker-compose.yml (the Dependabot-tracked source of truth).
       - name: Start Pub/Sub emulator
         run: |
           docker run -d --name pubsub-emulator -p 127.0.0.1:8085:8085 \
-            google/cloud-sdk:489.0.0-emulators \
+            google/cloud-sdk:489.0.0-emulators@sha256:6e0520e94bf93e4f4d53ffd8f52b664bd614b73e2f2e8467f54f6c9a9f4d0763 \
             bash -c "gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=test-project-id"
           # Ready = the emulator answers HTTP (docker-proxy accepts TCP before it listens).
           for i in $(seq 1 60); do
@@ -256,7 +275,7 @@ jobs:
       # One run: coveralls runs the whole suite and enforces coveralls.json's
       # minimum_coverage. test_helper.exs fails when CI is set and the emulator is down.
       - name: Run tests with coverage
-        run: mix coveralls.html
+        run: mix coveralls.html --warnings-as-errors
 
       - name: Upload coverage reports
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -268,7 +287,8 @@ jobs:
     name: Publish to Hex
     runs-on: ubuntu-latest
     needs: [compile, format, credo, dialyzer, audit, test]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Tag pushes only: never from schedule or workflow_dispatch (even when dispatched on a tag).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # Required reviewers and the HEX_API_KEY secret are configured on this environment
     # in the GitHub repository settings.
     environment: hex

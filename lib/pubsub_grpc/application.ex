@@ -61,27 +61,47 @@ defmodule PubsubGrpc.Application do
     * an endpoint that is not `type: :local` has no TLS (`:ssl` / `:credentials`),
       because authentication tokens would be sent in plaintext.
 
-  ## Legacy Configuration Support
+  ## Default configuration
 
-  The following legacy configuration is still supported when
-  `config :pubsub_grpc, GrpcConnectionPool` is absent:
+  When `config :pubsub_grpc, GrpcConnectionPool` is absent, the pool connects to
+  production Pub/Sub (`pubsub.googleapis.com:443`, verified TLS), or to the
+  emulator when the `:emulator` shorthand is set:
 
-      # config/config.exs
+      # config/dev.exs
+      config :pubsub_grpc, :emulator, host: "localhost", port: 8085
+      # Pool size for either endpoint (default: 5)
       config :pubsub_grpc, :default_pool_size, 10
-      config :pubsub_grpc, :emulator, [
-        project_id: "my-project-id",
-        host: "localhost",
-        port: 8085
-      ]
 
   `:emulator` must be a keyword list; any other value is ignored (with a warning)
   and the production endpoint is used.
+
+  ## Supervision
+
+  The supervisor allows 10 restarts in 5 seconds. If a child (the pool or the
+  auth token cache) crashes more often than that, the `:pubsub_grpc` application
+  stops. What happens next depends on how it was started: in a `mix release`,
+  applications are started `:permanent` by default, so the whole node shuts down
+  (and is restarted by its supervisor, e.g. systemd or Kubernetes). Started as a
+  `:temporary` application (`mix run`, `iex -S mix`, tests), only `:pubsub_grpc`
+  stops; calls then return `:connection_error` (no pool) or an auth error (no
+  token cache) until it is started again.
 
   ## Supervising the pool yourself
 
   Set `config :pubsub_grpc, :start_pool, false` to keep this application from
   starting the default pool, then add `PubsubGrpc` (see `PubsubGrpc.child_spec/1`)
   to your own supervision tree.
+
+  ## Log redaction
+
+  When grpc's connection process exits during a call, grpc logs the exit
+  reason, which contains the request headers, including the bearer token. The
+  application installs a `:logger` primary filter that rewrites
+  `Bearer <token>` to `Bearer [REDACTED]` in log events emitted by
+  `GRPC.Telemetry` only; other events are left untouched. To opt out (e.g. if
+  your app already redacts its logs):
+
+      config :pubsub_grpc, :redact_grpc_logs, false
 
   ## Custom Pools
 
@@ -110,7 +130,7 @@ defmodule PubsubGrpc.Application do
 
   require Logger
 
-  alias PubsubGrpc.Config
+  alias PubsubGrpc.{Config, LogRedactor}
 
   @impl true
   def start(_type, _args) do
@@ -119,17 +139,25 @@ defmodule PubsubGrpc.Application do
     Config.put(resolved)
     log_config(resolved, env)
 
-    opts = [strategy: :one_for_one, name: PubsubGrpc.Supervisor, max_restarts: 10]
-    Supervisor.start_link(children(resolved, env), opts)
+    if Keyword.get(env, :redact_grpc_logs, true) != false, do: LogRedactor.install()
+
+    opts = [
+      strategy: :one_for_one,
+      name: PubsubGrpc.Supervisor,
+      max_restarts: 10,
+      max_seconds: 5
+    ]
+
+    Supervisor.start_link(children(resolved), opts)
   end
 
+  @impl true
+  def stop(_state), do: LogRedactor.uninstall()
+
   @doc false
-  @spec children(Config.resolved(), keyword()) :: [Supervisor.child_spec() | module() | tuple()]
-  def children(resolved, env) do
-    pool =
-      if Keyword.get(env, :start_pool, true) == false,
-        do: [],
-        else: [{GrpcConnectionPool, resolved.pool_config}]
+  @spec children(Config.resolved()) :: [Supervisor.child_spec() | module() | tuple()]
+  def children(resolved) do
+    pool = if resolved.start_pool, do: [{GrpcConnectionPool, resolved.pool_config}], else: []
 
     [
       # Runs auth token fetches for Auth.Cache; must start before it.
@@ -139,15 +167,18 @@ defmodule PubsubGrpc.Application do
     ]
   end
 
-  defp log_config(resolved, env) do
+  # Public only so the startup log lines documented in the moduledoc can be tested.
+  @doc false
+  @spec log_config(Config.resolved(), keyword()) :: :ok
+  def log_config(resolved, env) do
     case resolved.source do
       :app_env -> Logger.info("PubsubGrpc: connection pool configured from application env")
-      :legacy -> Logger.info("PubsubGrpc: connection pool configured from legacy config")
+      :default -> Logger.info("PubsubGrpc: connection pool configured from defaults")
     end
 
     emulator = Keyword.get(env, :emulator)
 
-    if resolved.source == :legacy and not is_nil(emulator) and not is_list(emulator) do
+    if resolved.source == :default and not is_nil(emulator) and not is_list(emulator) do
       Logger.warning(
         "PubsubGrpc: ignoring `config :pubsub_grpc, :emulator, #{inspect(emulator)}`: " <>
           "it must be a keyword list (host:, port:). Using the production endpoint."
@@ -160,5 +191,7 @@ defmodule PubsubGrpc.Application do
           "Do not use this configuration in production."
       )
     end
+
+    :ok
   end
 end

@@ -7,6 +7,10 @@ defmodule PubsubGrpc.Schema do
   alias PubsubGrpc.Proto.Google.Pubsub.V1, as: PubsubV1
   alias PubsubV1.SchemaService.Stub, as: SchemaStub
 
+  @common_opts [:timeout, :pool]
+  @view_opts [:view | @common_opts]
+  @list_opts [:view, :page_size, :page_token | @common_opts]
+
   @spec list_schemas(String.t(), keyword()) ::
           {:ok, %{schemas: list(), next_page_token: String.t()}} | {:error, Error.t()}
   def list_schemas(project_id, opts \\ []) do
@@ -16,16 +20,12 @@ defmodule PubsubGrpc.Schema do
   end
 
   defp do_list_schemas(project_id, opts) do
-    view = opts[:view] || :basic
-
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, view_enum} <- Validation.validate_schema_view(view) do
-      request = %PubsubV1.ListSchemasRequest{
-        parent: Request.project_path(project_id),
-        view: view_enum,
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
+         {:ok, opts} <- Validation.validate_request_opts(opts, @list_opts),
+         {:ok, view_enum} <- Validation.validate_schema_view(opts[:view] || :basic) do
+      request =
+        %PubsubV1.ListSchemasRequest{parent: Request.project_path(project_id), view: view_enum}
+        |> struct!(Request.page_fields(opts))
 
       fn channel, grpc_opts -> SchemaStub.list_schemas(channel, request, grpc_opts) end
       |> Request.execute(opts)
@@ -42,11 +42,10 @@ defmodule PubsubGrpc.Schema do
   end
 
   defp do_get_schema(project_id, schema_id, opts) do
-    view = opts[:view] || :full
-
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
-         {:ok, view_enum} <- Validation.validate_schema_view(view) do
+         {:ok, opts} <- Validation.validate_request_opts(opts, @view_opts),
+         {:ok, view_enum} <- Validation.validate_schema_view(opts[:view] || :full) do
       request = %PubsubV1.GetSchemaRequest{
         name: Request.schema_path(project_id, schema_id),
         view: view_enum
@@ -58,7 +57,7 @@ defmodule PubsubGrpc.Schema do
     end
   end
 
-  @spec create_schema(String.t(), String.t(), :protocol_buffer | :avro, String.t(), keyword()) ::
+  @spec create_schema(String.t(), String.t(), PubsubGrpc.schema_type(), String.t(), keyword()) ::
           {:ok, PubsubGrpc.schema()} | {:error, Error.t()}
   def create_schema(project_id, schema_id, type, definition, opts \\ []) do
     Telemetry.span(
@@ -71,7 +70,9 @@ defmodule PubsubGrpc.Schema do
   defp do_create_schema(project_id, schema_id, type, definition, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
-         {:ok, type_enum} <- Validation.validate_schema_type(type) do
+         {:ok, type_enum} <- Validation.validate_schema_type(type),
+         {:ok, _} <- Validation.validate_binary(definition, "definition"),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.CreateSchemaRequest{
         parent: Request.project_path(project_id),
         schema_id: schema_id,
@@ -93,7 +94,8 @@ defmodule PubsubGrpc.Schema do
 
   defp do_delete_schema(project_id, schema_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_schema_id(schema_id) do
+         {:ok, _} <- Validation.validate_schema_id(schema_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.DeleteSchemaRequest{name: Request.schema_path(project_id, schema_id)}
 
       fn channel, grpc_opts -> SchemaStub.delete_schema(channel, request, grpc_opts) end
@@ -102,7 +104,7 @@ defmodule PubsubGrpc.Schema do
     end
   end
 
-  @spec validate_schema(String.t(), :protocol_buffer | :avro, String.t(), keyword()) ::
+  @spec validate_schema(String.t(), PubsubGrpc.schema_type(), String.t(), keyword()) ::
           {:ok, PubsubGrpc.validate_schema_response()} | {:error, Error.t()}
   def validate_schema(project_id, type, definition, opts \\ []) do
     Telemetry.span(:validate_schema, %{project_id: project_id, schema_type: type}, fn ->
@@ -112,7 +114,9 @@ defmodule PubsubGrpc.Schema do
 
   defp do_validate_schema(project_id, type, definition, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, type_enum} <- Validation.validate_schema_type(type) do
+         {:ok, type_enum} <- Validation.validate_schema_type(type),
+         {:ok, _} <- Validation.validate_binary(definition, "definition"),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.ValidateSchemaRequest{
         parent: Request.project_path(project_id),
         schema: %PubsubV1.Schema{type: type_enum, definition: definition}
@@ -135,17 +139,16 @@ defmodule PubsubGrpc.Schema do
   end
 
   defp do_list_schema_revisions(project_id, schema_id, opts) do
-    view = opts[:view] || :basic
-
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_id(schema_id),
-         {:ok, view_enum} <- Validation.validate_schema_view(view) do
-      request = %PubsubV1.ListSchemaRevisionsRequest{
-        name: Request.schema_path(project_id, schema_id),
-        view: view_enum,
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
+         {:ok, opts} <- Validation.validate_request_opts(opts, @list_opts),
+         {:ok, view_enum} <- Validation.validate_schema_view(opts[:view] || :basic) do
+      request =
+        %PubsubV1.ListSchemaRevisionsRequest{
+          name: Request.schema_path(project_id, schema_id),
+          view: view_enum
+        }
+        |> struct!(Request.page_fields(opts))
 
       fn channel, grpc_opts -> SchemaStub.list_schema_revisions(channel, request, grpc_opts) end
       |> Request.execute(opts)
@@ -153,7 +156,7 @@ defmodule PubsubGrpc.Schema do
     end
   end
 
-  @spec validate_message(String.t(), String.t(), binary(), :json | :binary, keyword()) ::
+  @spec validate_message(String.t(), String.t(), binary(), PubsubGrpc.encoding(), keyword()) ::
           {:ok, PubsubGrpc.validate_message_response()} | {:error, Error.t()}
   def validate_message(project_id, schema_name, message, encoding, opts \\ []) do
     Telemetry.span(
@@ -166,7 +169,9 @@ defmodule PubsubGrpc.Schema do
   defp do_validate_message(project_id, schema_name, message, encoding, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_schema_name(schema_name),
-         {:ok, encoding_enum} <- Validation.validate_encoding(encoding) do
+         {:ok, _} <- Validation.validate_binary(message, "message"),
+         {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       # A bare schema ID is resolved within `project_id`.
       name =
         if String.contains?(schema_name, "/") do
@@ -190,10 +195,10 @@ defmodule PubsubGrpc.Schema do
 
   @spec validate_message_with_schema(
           String.t(),
-          :protocol_buffer | :avro,
+          PubsubGrpc.schema_type(),
           String.t(),
           binary(),
-          :json | :binary,
+          PubsubGrpc.encoding(),
           keyword()
         ) ::
           {:ok, PubsubGrpc.validate_message_response()} | {:error, Error.t()}
@@ -210,7 +215,10 @@ defmodule PubsubGrpc.Schema do
   defp do_validate_message_with_schema(project_id, type, definition, message, encoding, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, type_enum} <- Validation.validate_schema_type(type),
-         {:ok, encoding_enum} <- Validation.validate_encoding(encoding) do
+         {:ok, _} <- Validation.validate_binary(definition, "definition"),
+         {:ok, _} <- Validation.validate_binary(message, "message"),
+         {:ok, encoding_enum} <- Validation.validate_encoding(encoding),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.ValidateMessageRequest{
         parent: Request.project_path(project_id),
         schema_spec: {:schema, %PubsubV1.Schema{type: type_enum, definition: definition}},

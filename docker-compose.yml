@@ -1,6 +1,8 @@
 services:
   pubsub-emulator:
-    image: google/cloud-sdk:489.0.0-emulators
+    # Source of truth for the emulator image pin (tracked by Dependabot). Keep the copies in
+    # .github/workflows/elixir.yml, dev/mix/tasks/emulator.start.ex and test/test_helper.exs in sync.
+    image: google/cloud-sdk:489.0.0-emulators@sha256:6e0520e94bf93e4f4d53ffd8f52b664bd614b73e2f2e8467f54f6c9a9f4d0763
     command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=my-project-id
     ports:
       - "127.0.0.1:8085:8085"

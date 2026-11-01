@@ -9,7 +9,11 @@ defmodule PubsubGrpc.Auth do
 
   Cached tokens are read without any process hop. On a cache miss, exactly one
   token fetch runs at a time: concurrent callers wait for that fetch and share
-  its result instead of each starting their own.
+  its result instead of each starting their own. Tokens are refreshed in the
+  background shortly before expiry (5 minutes, or 10% of the token's lifetime
+  for short-lived tokens) while the current one keeps being served, so callers
+  normally never wait for a fetch. After a failed fetch, callers get the same
+  error without a new fetch for a short backoff (1 s, doubling up to 5 s).
 
   Tokens are only ever sent over TLS: the library's operations attach the
   `authorization` metadata per checked-out channel (see `request_opts/1`), so a
@@ -43,11 +47,19 @@ defmodule PubsubGrpc.Auth do
 
   require Logger
 
+  # Goth is an optional dependency, guarded by `Code.ensure_loaded?/1` at runtime.
+  @compile {:no_warn_undefined, Goth}
+
   alias PubsubGrpc.Auth.{Cache, CLI}
   alias PubsubGrpc.{Config, Error, Telemetry}
 
   # Cache gcloud CLI tokens for 50 minutes (tokens expire in 60 min)
   @cli_token_ttl_ms 50 * 60 * 1000
+  # Goth tokens are cached until 60 s before their expiry, but at least this long
+  # (capped at the token's real remaining life), so a token close to expiry does
+  # not turn every request into a miss.
+  @goth_expiry_skew_ms 60_000
+  @min_goth_ttl_ms 1_000
   @gcloud_args ["auth", "application-default", "print-access-token"]
   # OAuth2 access tokens are opaque base64url-like strings of ~100+ chars;
   # requiring 20 keeps status words such as "Done." from passing as a token.
@@ -63,18 +75,16 @@ defmodule PubsubGrpc.Auth do
   rotating credentials. A fetch that is in flight when the cache is cleared
   still answers its waiting callers, but its token is not cached.
 
-  A request that fails with `UNAUTHENTICATED` invalidates the token it carried
-  (see `invalidate/1`).
+  A request that fails with `UNAUTHENTICATED` on the configured pool invalidates
+  the token it carried, unless a newer token has replaced it already.
   """
   @spec clear_cache() :: :ok
   def clear_cache, do: Cache.clear()
 
-  @doc """
-  Removes `token` from the cache if, and only if, it is the cached token.
-
-  Used after a request carrying `token` was rejected with `UNAUTHENTICATED`, so a
-  late rejection of an old token never evicts a newer one.
-  """
+  # Internal: used by `PubsubGrpc.Request` after a request carrying `token` was
+  # rejected with `UNAUTHENTICATED`. Removes `token` only if it is still the
+  # cached token, so a late rejection of an old token never evicts a newer one.
+  @doc false
   @spec invalidate(String.t()) :: :ok
   def invalidate(token) when is_binary(token), do: Cache.invalidate(token)
 
@@ -82,7 +92,7 @@ defmodule PubsubGrpc.Auth do
   Gets an authentication token for Google Cloud API calls.
 
   Returns a token string in the format "Bearer <token>". Tokens are cached
-  in ETS and refreshed automatically when expired.
+  in ETS and refreshed in the background shortly before they expire.
 
   ## Returns
   - `{:ok, "Bearer <token>"}` - Token retrieved successfully
@@ -93,8 +103,15 @@ defmodule PubsubGrpc.Auth do
   @spec get_token() :: {:ok, String.t()} | {:error, Error.t()}
   def get_token do
     case Cache.lookup() do
-      {:ok, token} -> {:ok, token}
-      :miss -> Cache.refresh(&fetch_token/0, Config.auth_timeout())
+      {:ok, token, :fresh} ->
+        {:ok, token}
+
+      {:ok, token, :refresh_due} ->
+        Cache.refresh_ahead(&fetch_token/0, Config.auth_timeout())
+        {:ok, token}
+
+      :miss ->
+        Cache.refresh(&fetch_token/0, Config.auth_timeout())
     end
   end
 
@@ -132,9 +149,11 @@ defmodule PubsubGrpc.Auth do
   When the configured endpoint type is `:local` (emulator), returns `{:ok, []}`.
   Otherwise returns `{:ok, [metadata: %{"authorization" => token}]}`.
 
-  Prefer `request_opts/1`: it decides per channel, so a token is never sent over
-  a plaintext connection, e.g. from a pool other than the configured one.
+  Deprecated: use `request_opts/1`. It decides per channel, so a token is never
+  sent over a plaintext connection, e.g. from a pool other than the configured
+  one. `request_opts/0` will be removed in v0.9.0.
   """
+  @deprecated "Use PubsubGrpc.Auth.request_opts/1"
   @spec request_opts() :: {:ok, keyword()} | {:error, Error.t()}
   def request_opts do
     if Config.emulator?(), do: {:ok, []}, else: token_opts()
@@ -216,8 +235,12 @@ defmodule PubsubGrpc.Auth do
       end
 
     case expires_dt do
-      nil -> @cli_token_ttl_ms
-      dt -> max(DateTime.diff(dt, DateTime.utc_now(), :millisecond) - 60_000, 0)
+      nil ->
+        @cli_token_ttl_ms
+
+      dt ->
+        remaining = max(DateTime.diff(dt, DateTime.utc_now(), :millisecond), 0)
+        (remaining - @goth_expiry_skew_ms) |> max(@min_goth_ttl_ms) |> min(remaining)
     end
   end
 
@@ -254,9 +277,9 @@ defmodule PubsubGrpc.Auth do
     end
   end
 
-  defp handle_gcloud_result({:ok, output, exit_code}) do
-    # Log raw output at debug only (may contain ADC paths, account emails).
-    Logger.debug(fn -> "PubsubGrpc: gcloud output: #{String.trim(output)}" end)
+  # The raw output is never logged, not even at debug: it may hold ADC paths,
+  # account emails or token-shaped strings.
+  defp handle_gcloud_result({:ok, _output, exit_code}) do
     Logger.error("PubsubGrpc: gcloud CLI auth failed (exit #{exit_code})")
 
     {:error,
@@ -277,10 +300,22 @@ defmodule PubsubGrpc.Auth do
     {:error, Error.new(:unauthenticated, "gcloud CLI auth failed", reason)}
   end
 
-  defp access_token?(line) do
-    byte_size(line) >= @min_token_length and
-      Regex.match?(~r/\A[A-Za-z0-9._\-~+\/]+=*\z/, line)
-  end
+  # `[A-Za-z0-9._\-~+/]+=*`, at least @min_token_length bytes.
+  defguardp is_token_char(c)
+            when c in ?A..?Z or c in ?a..?z or c in ?0..?9 or c in [?., ?_, ?-, ?~, ?+, ?/]
+
+  defp access_token?(<<first, _::binary>> = line)
+       when is_token_char(first) and byte_size(line) >= @min_token_length,
+       do: token_chars?(line)
+
+  defp access_token?(_line), do: false
+
+  defp token_chars?(<<c, rest::binary>>) when is_token_char(c), do: token_chars?(rest)
+  defp token_chars?(padding), do: padding?(padding)
+
+  defp padding?(<<?=, rest::binary>>), do: padding?(rest)
+  defp padding?(<<>>), do: true
+  defp padding?(_), do: false
 
   # Best-effort tag for logging: an atom describing the error shape, never its contents.
   defp error_tag(%{__struct__: mod}), do: mod

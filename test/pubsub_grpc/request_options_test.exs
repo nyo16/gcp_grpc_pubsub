@@ -103,6 +103,15 @@ defmodule PubsubGrpc.RequestOptionsTest do
       assert elapsed_us < 2_000_000
     end
 
+    test "a pool that does not exist returns {:error, :not_connected} at once" do
+      pool = :"missing_pool_#{System.unique_integer([:positive])}"
+
+      assert {:error, :not_connected} =
+               Client.execute(fn _ -> flunk("callback must not run") end, pool: pool, timeout: 50)
+
+      assert %{error: :pool_not_found} = PubsubGrpc.pool_status(pool: pool)
+    end
+
     test "the wait is capped at 2 seconds regardless of :timeout" do
       pool = start_pool(port: 1)
 
@@ -114,12 +123,12 @@ defmodule PubsubGrpc.RequestOptionsTest do
       assert elapsed_us < 6_000_000
     end
 
+    # The first checkout usually finds no connected worker yet (workers connect
+    # asynchronously); asserting that would race the connect, so only the outcome
+    # is checked.
     @tag :integration
-    test "retries the checkout once the pool connects" do
+    test "a freshly started pool serves the first call once it connects" do
       pool = start_pool(port: 8085)
-
-      # Connections are established asynchronously after start.
-      assert {:error, :not_connected} = GrpcConnectionPool.get_channel(pool)
 
       assert {:ok, %GRPC.Channel{}} =
                Client.execute(fn channel -> channel end, pool: pool, timeout: 2_000)

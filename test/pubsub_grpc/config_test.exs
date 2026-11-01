@@ -5,11 +5,11 @@ defmodule PubsubGrpc.ConfigTest do
 
   @local_endpoint [type: :local, host: "localhost", port: 8085]
 
-  describe "resolve/1 with the legacy config" do
+  describe "resolve/1 without a GrpcConnectionPool key" do
     test "a keyword :emulator gives a :local endpoint and the default pool name" do
       resolved = Config.resolve(emulator: [host: "emu", port: 9999], default_pool_size: 2)
 
-      assert %{endpoint_type: :local, source: :legacy, pool_name: PubsubGrpc.ConnectionPool} =
+      assert %{endpoint_type: :local, source: :default, pool_name: PubsubGrpc.ConnectionPool} =
                resolved
 
       assert %{host: "emu", port: 9999, ssl: nil} = resolved.pool_config.endpoint
@@ -153,6 +153,18 @@ defmodule PubsubGrpc.ConfigTest do
 
       assert %{endpoint_type: :production} = Config.resolve(auth_timeout: 5_000)
     end
+
+    test "an invalid :default_timeout raises" do
+      for value <- [0, -1, "30s", 1.5, nil] do
+        assert_raise ArgumentError, ~r/:default_timeout.*positive integer.*:infinity/, fn ->
+          Config.resolve(default_timeout: value)
+        end
+      end
+
+      assert %{default_timeout: :infinity} = Config.resolve(default_timeout: :infinity)
+      assert %{default_timeout: 5_000} = Config.resolve(default_timeout: 5_000)
+      assert %{default_timeout: 30_000} = Config.resolve([])
+    end
   end
 
   describe "production_ssl_opts/1" do
@@ -172,23 +184,51 @@ defmodule PubsubGrpc.ConfigTest do
     end
   end
 
-  describe "PubsubGrpc.Application.children/2" do
-    setup do
-      %{resolved: Config.resolve([{GrpcConnectionPool, [endpoint: @local_endpoint]}])}
-    end
+  describe "PubsubGrpc.Application.children/1" do
+    test "starts the pool by default" do
+      resolved = Config.resolve([{GrpcConnectionPool, [endpoint: @local_endpoint]}])
 
-    test "starts the pool by default", %{resolved: resolved} do
+      assert resolved.start_pool
+
       assert {GrpcConnectionPool, resolved.pool_config} in PubsubGrpc.Application.children(
-               resolved,
-               []
+               resolved
              )
     end
 
-    test "start_pool: false leaves the pool out", %{resolved: resolved} do
-      children = PubsubGrpc.Application.children(resolved, start_pool: false)
+    test "start_pool: false leaves the pool out" do
+      resolved =
+        Config.resolve([{GrpcConnectionPool, [endpoint: @local_endpoint]}, start_pool: false])
+
+      refute resolved.start_pool
+      children = PubsubGrpc.Application.children(resolved)
 
       refute Enum.any?(children, &match?({GrpcConnectionPool, _}, &1))
       assert PubsubGrpc.Auth.Cache in children
+    end
+  end
+
+  describe "PubsubGrpc.Application.log_config/2 (startup log lines)" do
+    import ExUnit.CaptureLog
+
+    test "a non-keyword :emulator is reported as ignored, and production is used" do
+      env = [emulator: true]
+      resolved = Config.resolve(env)
+
+      log = capture_log(fn -> PubsubGrpc.Application.log_config(resolved, env) end)
+
+      assert log =~ "configured from defaults"
+      assert log =~ "ignoring `config :pubsub_grpc, :emulator, true`"
+      refute log =~ "authentication will be skipped"
+    end
+
+    test "a local endpoint from the application env warns that auth is skipped" do
+      env = [{GrpcConnectionPool, [endpoint: @local_endpoint]}]
+      resolved = Config.resolve(env)
+
+      log = capture_log(fn -> PubsubGrpc.Application.log_config(resolved, env) end)
+
+      assert log =~ "configured from application env"
+      assert log =~ "authentication will be skipped"
     end
   end
 

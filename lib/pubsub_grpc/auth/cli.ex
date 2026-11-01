@@ -62,7 +62,10 @@ defmodule PubsubGrpc.Auth.CLI do
 
   # `nil` when the command already exited and its port closed: its output and exit
   # status are then already in the mailbox, and there is no OS process to kill.
-  defp os_pid(port) do
+  # Public only so this branch can be tested without relying on a race.
+  @doc false
+  @spec os_pid(port()) :: non_neg_integer() | nil
+  def os_pid(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, os_pid} -> os_pid
       nil -> nil

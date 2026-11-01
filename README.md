@@ -9,7 +9,7 @@ High-performance Google Cloud Pub/Sub client using gRPC with connection pooling.
 - 🚀 **High Performance**: gRPC with connection pooling (2-3x faster than HTTP)
 - 📦 **Batch Publishing**: Send 100-1000+ messages per API call
 - 🔄 **Auto-Recovery**: Health monitoring with exponential backoff
-- 🔐 **Easy Auth**: Goth, gcloud CLI, service accounts, or GCE metadata
+- 🔐 **Auth**: Goth (service accounts, GCE/GKE metadata) or the gcloud CLI for development
 - 🐳 **Dev-Friendly**: Docker Compose emulator included
 - 📋 **Schema Support**: Protocol Buffer and Avro schemas
 
@@ -30,12 +30,13 @@ Elixir 1.20 on OTP 29.1.
 
 ### Authentication
 
-```bash
-# Option 1: Use gcloud CLI (development)
-gcloud auth application-default login
+Production: use [Goth](#using-goth-for-authentication) and set
+`config :pubsub_grpc, :goth, MyApp.Goth`. Development without Goth: the library falls
+back to the gcloud CLI (it forks `gcloud` on every token refresh, so do not use it in
+production):
 
-# Option 2: Set service account (production)
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```bash
+gcloud auth application-default login
 ```
 
 ### Basic Usage
@@ -97,8 +98,8 @@ ack_ids = Enum.map(received, & &1.ack_id)
 :ok = PubsubGrpc.acknowledge(project_id, subscription_id, ack_ids)
 
 # 5. Check pool health
-GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
-# => %{status: :healthy, current_size: 5, expected_size: 5}
+PubsubGrpc.pool_status()
+# => %{status: :healthy, current_size: 5, expected_size: 5, ...}
 ```
 
 ## Configuration
@@ -109,8 +110,9 @@ GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
 # config/prod.exs
 import Config
 
-# No config needed - uses pubsub.googleapis.com:443
-# Set GOOGLE_APPLICATION_CREDENTIALS environment variable
+# Endpoint: pubsub.googleapis.com:443 with verified TLS, no config needed.
+# Credentials: Goth (see "Using Goth for Authentication").
+config :pubsub_grpc, :goth, MyApp.Goth
 ```
 
 ### Development (Local Emulator)
@@ -119,10 +121,7 @@ import Config
 # config/dev.exs
 import Config
 
-config :pubsub_grpc, :emulator,
-  project_id: "my-project-id",
-  host: "localhost",
-  port: 8085
+config :pubsub_grpc, :emulator, host: "localhost", port: 8085
 ```
 
 Start the emulator:
@@ -224,8 +223,8 @@ PubsubGrpc.publish(project_id, topic_id, messages)
 ### Connection Pool Monitoring
 
 ```elixir
-# Check pool health
-GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
+# Check pool health (pass pool: name for another pool)
+PubsubGrpc.pool_status()
 
 # Custom gRPC call on a pooled channel (advanced): errors are normalized to
 # %PubsubGrpc.Error{}, and the auth token is attached only over TLS
@@ -237,6 +236,19 @@ alias PubsubGrpc.Proto.Google.Pubsub.V1
     request = %V1.GetTopicRequest{topic: "projects/#{project_id}/topics/#{topic_id}"}
     V1.Publisher.Stub.get_topic(channel, request, auth_opts)
   end)
+```
+
+### Pool Size and Long Polling
+
+The pool has 5 connections by default. grpc serializes request starts per connection
+process, and `pull/4` on an empty subscription can hold a connection until messages
+arrive or the deadline passes (up to its `:timeout`, 30 s by default). Size the pool to
+at least your number of concurrent pulls plus headroom for other calls, and pass a pull
+`:timeout` below any `GenServer.call` timeout that wraps it:
+
+```elixir
+config :pubsub_grpc, :default_pool_size, 10
+# or: config :pubsub_grpc, GrpcConnectionPool, pool: [size: 10], ...
 ```
 
 ## Testing
@@ -320,15 +332,61 @@ config :pubsub_grpc, :auth_timeout, 5_000
 
 ### Using Goth for Authentication
 
+Goth is the supported production auth source. It covers service account keys and the
+GCE/GKE metadata server; tokens are cached and refreshed in the background before they
+expire.
+
 ```elixir
-# Add to dependencies
+# mix.exs
 {:goth, "~> 1.4"}
 
-# Configure
-config :goth, json: {:system, "GOOGLE_APPLICATION_CREDENTIALS_JSON"}
+# config/config.exs
+config :pubsub_grpc, :goth, MyApp.Goth
 
-# Add to supervision tree
-{Goth, name: MyApp.Goth, source: {:service_account, credentials}}
+# MyApp.Application: service account key from an env var holding the JSON
+credentials = "GOOGLE_APPLICATION_CREDENTIALS_JSON" |> System.fetch_env!() |> Jason.decode!()
+
+children = [
+  {Goth, name: MyApp.Goth, source: {:service_account, credentials}}
+  # On GCE/GKE use the metadata server instead:
+  # {Goth, name: MyApp.Goth, source: {:metadata, []}}
+]
+```
+
+`GOOGLE_APPLICATION_CREDENTIALS` (a key file path) is not read by this library directly;
+load the file and pass it to Goth: `credentials = path |> File.read!() |> Jason.decode!()`.
+
+Without `:goth`, tokens come from `gcloud auth application-default print-access-token`.
+That forks a process per refresh and is meant for development only.
+
+## Security Advisories
+
+`mix hex.audit` in a project depending on `pubsub_grpc` reports CVE-2026-43966 for
+**cowlib** (EEF-CVE-2026-43966) and **gun** (GHSA-w4f7-4cxr-rv3c). Both come in through
+grpc's gun adapter, and neither is reachable from this library:
+
+- cowlib: the vulnerable encoder `cow_http_struct_hd:escape_string/2` is not called on the
+  gRPC client path. No fixed cowlib release exists yet.
+- gun: the advisory's "patched" version (2.16.0) is a cowboy version, so scanners flag
+  every gun release. grpc pins `gun ~> 2.4.0`.
+
+This library ignores the advisory in its own `mix.exs`; to do the same in yours:
+
+```elixir
+def project do
+  [
+    # ...
+    hex: [ignore_advisories: ["CVE-2026-43966"]]
+  ]
+end
+```
+
+Review the list on every dependency bump. Since 0.8.0 (via `grpc_connection_pool`
+0.5.5), updating `pubsub_grpc` enforces the fixed cowlib (≥ 2.21.0) and protobuf
+(≥ 0.17.1). If you use Goth, also make sure your lock has jose ≥ 1.11.13:
+
+```bash
+mix deps.update pubsub_grpc jose
 ```
 
 ## Troubleshooting
@@ -336,19 +394,19 @@ config :goth, json: {:system, "GOOGLE_APPLICATION_CREDENTIALS_JSON"}
 ### Authentication Error
 
 ```bash
-# Ensure you're authenticated
+# Development: authenticate the gcloud CLI
 gcloud auth application-default login
 
-# Or set service account
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"
+# Production: check that `config :pubsub_grpc, :goth, MyApp.Goth` is set and the
+# Goth process is started before the first call
 ```
 
 ### Connection Issues
 
 ```elixir
 # Check pool status
-GrpcConnectionPool.status(PubsubGrpc.ConnectionPool)
-# Should show: %{status: :healthy, current_size: 5, expected_size: 5}
+PubsubGrpc.pool_status()
+# Should show: %{status: :healthy, current_size: 5, expected_size: 5, ...}
 
 # Restart application if needed
 ```
@@ -410,7 +468,7 @@ docker-compose down
 
 ```bash
 # Start the emulator
-docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators@sha256:6e0520e94bf93e4f4d53ffd8f52b664bd614b73e2f2e8467f54f6c9a9f4d0763 /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 
 # Stop with Ctrl+C or docker stop
 ```
@@ -457,7 +515,7 @@ docker-compose up -d
 
 #### Method 3: Direct Docker Command
 ```bash
-docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
+docker run --rm -p 127.0.0.1:8085:8085 google/cloud-sdk:489.0.0-emulators@sha256:6e0520e94bf93e4f4d53ffd8f52b664bd614b73e2f2e8467f54f6c9a9f4d0763 /bin/bash -c "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
 ```
 
 All methods start the emulator at `localhost:8085` with project ID `test-project-id`.

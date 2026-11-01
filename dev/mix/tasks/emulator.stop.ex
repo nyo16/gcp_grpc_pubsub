@@ -24,7 +24,7 @@ defmodule Mix.Tasks.Emulator.Stop do
         if String.contains?(error, "No such container") do
           Mix.Shell.IO.info("Emulator is not running")
         else
-          Mix.Shell.IO.error("Failed to stop emulator: #{error}")
+          Mix.raise("Failed to stop emulator: #{error}")
         end
     end
   end

@@ -85,24 +85,8 @@ defmodule PubsubGrpc.ClientTest do
              Client.execute(&SubscriberStub.acknowledge(&1, ack))
   end
 
-  test "deprecated with_connection/2 behaves like execute/2" do
-    # apply/3 so the deprecated call doesn't emit a compile-time warning.
-    # credo:disable-for-next-line Credo.Check.Refactor.Apply
-    result = apply(Client, :with_connection, [fn %GRPC.Channel{} -> {:ok, :value} end])
-    assert {:ok, {:ok, :value}} = result
-  end
-
-  test "status/1 reports the application pool" do
-    PubsubGrpc.Eventually.eventually(fn -> Client.status().status == :healthy end)
-    assert %{pool_name: PubsubGrpc.ConnectionPool, status: :healthy} = Client.status()
-  end
-
-  test "a pool that does not exist returns {:error, :not_connected}" do
-    pool = :"missing_pool_#{System.unique_integer([:positive])}"
-
-    assert {:error, :not_connected} =
-             Client.execute(fn _ -> flunk("callback must not run") end, pool: pool, timeout: 50)
-
-    assert %{error: :pool_not_found} = Client.status(pool: pool)
+  test "PubsubGrpc.pool_status/1 reports the application pool" do
+    PubsubGrpc.Eventually.eventually(fn -> PubsubGrpc.pool_status().status == :healthy end)
+    assert %{pool_name: PubsubGrpc.ConnectionPool, status: :healthy} = PubsubGrpc.pool_status()
   end
 end

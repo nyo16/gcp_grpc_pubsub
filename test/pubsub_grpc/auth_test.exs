@@ -1,5 +1,7 @@
 defmodule PubsubGrpc.AuthTest do
-  use ExUnit.Case
+  # Sync: mutates global state (app env, persistent_term Config, the OS PATH,
+  # Goth.Registry entries) and kills/restarts the named Auth.Cache process.
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
   import PubsubGrpc.Eventually, only: [eventually: 1]
@@ -28,27 +30,15 @@ defmodule PubsubGrpc.AuthTest do
     :ok
   end
 
-  describe "request_opts/0" do
+  describe "global endpoint type" do
     setup :restore_config_on_exit
 
-    setup do
-      test_pid = self()
-
-      put_fetcher(fn ->
-        send(test_pid, :token_fetched)
-        {:ok, "Bearer t", 60_000}
-      end)
-
-      :ok
-    end
-
-    test "returns {:ok, []} with the legacy :emulator config" do
+    test "the :emulator shorthand is a local endpoint" do
       assert Application.get_env(:pubsub_grpc, :emulator) != nil
-      assert {:ok, []} = Auth.request_opts()
-      refute_received :token_fetched
+      assert Config.emulator?()
     end
 
-    test "a type: :local endpoint skips auth without any :emulator key" do
+    test "a type: :local endpoint is local without any :emulator key" do
       Application.delete_env(:pubsub_grpc, :emulator)
 
       Config.put(
@@ -57,16 +47,14 @@ defmodule PubsubGrpc.AuthTest do
         ])
       )
 
-      assert {:ok, []} = Auth.request_opts()
-      refute_received :token_fetched
+      assert Config.emulator?()
     end
 
-    test "a production endpoint requests a token even if :emulator is set" do
+    test "a production endpoint is not local even if :emulator is set" do
       assert Application.get_env(:pubsub_grpc, :emulator) != nil
       Config.put(Config.resolve([]))
 
-      assert {:ok, [metadata: %{"authorization" => "Bearer t"}]} = Auth.request_opts()
-      assert_received :token_fetched
+      refute Config.emulator?()
     end
 
     test "Config readers fall back to the application env when nothing is stored" do
@@ -74,9 +62,52 @@ defmodule PubsubGrpc.AuthTest do
 
       assert Config.pool_name() == PubsubGrpc.ConnectionPool
       assert Config.emulator?()
-      assert {:ok, []} = Auth.request_opts()
+    end
+
+    # Security fail-safe: an unresolvable config must never be taken for the
+    # emulator, so authentication is never skipped.
+    test "an unresolvable config is treated as production, with the default pool" do
+      on_exit(fn -> Application.delete_env(:pubsub_grpc, GrpcConnectionPool) end)
+      Application.put_env(:pubsub_grpc, GrpcConnectionPool, :not_a_keyword)
+      :persistent_term.erase({Config, :resolved})
+      put_fetcher(fn -> {:ok, "Bearer failsafe", 60_000} end)
+
+      assert Config.endpoint_type() == :production
+      refute Config.emulator?()
+      assert Config.pool_name() == PubsubGrpc.ConnectionPool
+      assert Config.default_timeout() == 30_000
+
+      tls_channel = %GRPC.Channel{scheme: "https", cred: %GRPC.Credential{ssl: []}}
+      metadata = [metadata: %{"authorization" => "Bearer failsafe"}]
+      assert {:ok, ^metadata} = Auth.request_opts(tls_channel)
+      assert {:ok, ^metadata} = deprecated_request_opts()
     end
   end
+
+  describe "request_opts/0 (deprecated)" do
+    setup :restore_config_on_exit
+
+    test "still decides from the global endpoint type" do
+      test_pid = self()
+
+      put_fetcher(fn ->
+        send(test_pid, :token_fetched)
+        {:ok, "Bearer t", 60_000}
+      end)
+
+      assert {:ok, []} = deprecated_request_opts()
+      refute_received :token_fetched
+
+      Config.put(Config.resolve([]))
+      assert {:ok, [metadata: %{"authorization" => "Bearer t"}]} = deprecated_request_opts()
+      assert_received :token_fetched
+    end
+  end
+
+  # A direct call to the deprecated function is a compile-time warning, which
+  # fails `mix test --warnings-as-errors`.
+  # credo:disable-for-next-line Credo.Check.Refactor.Apply
+  defp deprecated_request_opts, do: apply(Auth, :request_opts, [])
 
   describe "auth failure on a TLS channel" do
     test "a token fetch error is returned without calling the RPC" do
@@ -111,7 +142,7 @@ defmodule PubsubGrpc.AuthTest do
     test "removes the cached token and is idempotent" do
       put_fetcher(fn -> {:ok, "Bearer cached", 60_000} end)
       assert {:ok, "Bearer cached"} = Auth.get_token()
-      assert {:ok, "Bearer cached"} = Cache.lookup()
+      assert {:ok, "Bearer cached", :fresh} = Cache.lookup()
 
       assert :ok = Auth.clear_cache()
       assert :miss = Cache.lookup()
@@ -146,7 +177,7 @@ defmodule PubsubGrpc.AuthTest do
       assert :counters.get(counter, 1) == 2
     end
 
-    test "returns fetch errors without caching them" do
+    test "a fetch error is served from the negative cache during its backoff" do
       counter = :counters.new(1, [])
 
       put_fetcher(fn ->
@@ -155,8 +186,11 @@ defmodule PubsubGrpc.AuthTest do
       end)
 
       assert {:error, %Error{code: :unauthenticated, message: "nope"}} = Auth.get_token()
-      assert {:error, %Error{code: :unauthenticated}} = Auth.get_token()
-      assert :counters.get(counter, 1) == 2
+      # Independent of how long the call above took: the window ends in a minute.
+      extend_backoff()
+      assert {:error, %Error{code: :unauthenticated, message: "nope"}} = Auth.get_token()
+      assert :counters.get(counter, 1) == 1
+      assert :miss = Cache.lookup()
     end
 
     test "rejects an unexpected fetcher result without echoing it" do
@@ -248,7 +282,9 @@ defmodule PubsubGrpc.AuthTest do
 
       assert %{inflight: nil} = :sys.get_state(Cache)
 
-      # The next miss starts a new fetch.
+      # The crash is negatively cached; clear_cache/0 drops the backoff, and the next
+      # miss starts a new fetch.
+      Auth.clear_cache()
       put_fetcher(fn -> {:ok, "Bearer after-crash", 60_000} end)
       assert {:ok, "Bearer after-crash"} = Auth.get_token()
       assert :counters.get(counter, 1) == 1
@@ -274,7 +310,7 @@ defmodule PubsubGrpc.AuthTest do
       not_found = {:error, %GRPC.RPCError{status: 5, message: "nf"}}
 
       assert ^not_found = Request.call(@tls_channel, fn _ch, _opts -> not_found end, [])
-      assert {:ok, "Bearer cached"} = Cache.lookup()
+      assert {:ok, "Bearer cached", :fresh} = Cache.lookup()
     end
 
     test "a request rejected with status 16 invalidates the token it carried" do
@@ -303,7 +339,7 @@ defmodule PubsubGrpc.AuthTest do
                  pool: :some_custom_tls_pool
                )
 
-      assert {:ok, "Bearer shared"} = Cache.lookup()
+      assert {:ok, "Bearer shared", :fresh} = Cache.lookup()
 
       # The configured pool, named explicitly, still invalidates.
       assert @unauthenticated =
@@ -319,10 +355,19 @@ defmodule PubsubGrpc.AuthTest do
       assert {:ok, "Bearer new"} = Auth.get_token()
 
       assert :ok = Auth.invalidate("Bearer old")
-      assert {:ok, "Bearer new"} = Cache.lookup()
+      assert {:ok, "Bearer new", :fresh} = Cache.lookup()
 
       assert :ok = Auth.invalidate("Bearer new")
       assert :miss = Cache.lookup()
+    end
+
+    test "status 16 on a plaintext channel (no token sent) leaves the cache alone" do
+      put_fetcher(fn -> {:ok, "Bearer cached", 60_000} end)
+      assert {:ok, "Bearer cached"} = Auth.get_token()
+      plaintext = %GRPC.Channel{scheme: "http", cred: nil}
+
+      assert @unauthenticated = Request.call(plaintext, fn _ch, _opts -> @unauthenticated end, [])
+      assert {:ok, "Bearer cached", :fresh} = Cache.lookup()
     end
   end
 
@@ -343,7 +388,7 @@ defmodule PubsubGrpc.AuthTest do
       # A fetch started after the clear is cached again.
       put_fetcher(fn -> {:ok, "Bearer fresh", 60_000} end)
       assert {:ok, "Bearer fresh"} = Auth.get_token()
-      assert {:ok, "Bearer fresh"} = Cache.lookup()
+      assert {:ok, "Bearer fresh", :fresh} = Cache.lookup()
     end
 
     test "callers arriving after the clear start a new fetch instead of joining the old one" do
@@ -377,9 +422,30 @@ defmodule PubsubGrpc.AuthTest do
       assert {:ok, "Bearer 1"} = Task.await(before_clear)
 
       assert :counters.get(counter, 1) == 2
-      assert {:ok, "Bearer 2"} = Cache.lookup()
+      assert {:ok, "Bearer 2", :fresh} = Cache.lookup()
       assert %{inflight: nil, stale: stale} = :sys.get_state(Cache)
       assert stale == %{}
+    end
+  end
+
+  describe "per-call timeout reaching the gRPC call options" do
+    setup :restore_config_on_exit
+
+    @plaintext %GRPC.Channel{scheme: "http", cred: nil}
+
+    test ":timeout, then the configured :default_timeout (also for timeout: nil)" do
+      grpc_timeout = fn opts ->
+        Request.call(@plaintext, fn _ch, grpc -> grpc[:timeout] end, opts)
+      end
+
+      assert grpc_timeout.(timeout: 1_234) == 1_234
+      assert grpc_timeout.(timeout: :infinity) == :infinity
+      assert grpc_timeout.([]) == 30_000
+      assert grpc_timeout.(timeout: nil) == 30_000
+
+      env = Keyword.put(Application.get_all_env(:pubsub_grpc), :default_timeout, 7_000)
+      Config.put(Config.resolve(env))
+      assert grpc_timeout.([]) == 7_000
     end
   end
 
@@ -447,7 +513,7 @@ defmodule PubsubGrpc.AuthTest do
       refute Keyword.has_key?(opts, :metadata)
 
       # Through the public API as well (the emulator accepts unauthenticated calls).
-      topic = "auth-plaintext-#{System.unique_integer([:positive])}"
+      topic = PubsubGrpc.EmulatorHelper.unique_name("auth-plaintext")
       on_exit(fn -> PubsubGrpc.delete_topic("test-project-id", topic) end)
       assert {:ok, _} = PubsubGrpc.create_topic("test-project-id", topic, pool: pool)
 
@@ -589,6 +655,14 @@ defmodule PubsubGrpc.AuthTest do
         assert {:ok, "out\n", 3} = CLI.run(sh, ["-c", "echo out; exit 3"], 5_000)
       end
     end
+
+    test "os_pid/1 is nil once the command has exited and its port closed" do
+      port = Port.open({:spawn_executable, System.find_executable("true")}, [:exit_status])
+      assert_receive {^port, {:exit_status, 0}}
+      eventually(fn -> Port.info(port) == nil end)
+
+      assert CLI.os_pid(port) == nil
+    end
   end
 
   describe "Goth fallback policy" do
@@ -618,19 +692,17 @@ defmodule PubsubGrpc.AuthTest do
 
       assert {:ok, "Bearer ya29.goth"} = Auth.get_token()
 
-      assert [{:token, "Bearer ya29.goth", expires_at}] = :ets.lookup(Cache.table(), :token)
-      ttl_ms = expires_at - System.monotonic_time(:millisecond)
       # 3600 s - 60 s skew; Goth's expiry has second resolution.
-      assert ttl_ms in 3_538_000..3_540_000
-
-      assert {:ok, "Bearer ya29.goth"} = Cache.lookup()
+      assert cached_ttl_ms() in 3_538_000..3_540_000
+      assert {:ok, "Bearer ya29.goth", :fresh} = Cache.lookup()
     end
 
-    test "a token expiring within the 60 s skew is returned but not cached" do
+    test "a token expiring within the 60 s skew is cached for 1 s, not until its expiry" do
       start_goth(200, ~s({"access_token":"ya29.short","expires_in":30,"token_type":"Bearer"}))
 
       assert {:ok, "Bearer ya29.short"} = Auth.get_token()
-      assert :miss = Cache.lookup()
+      # The 1 s floor, minus the time since the fetch (without it, the TTL would be 0).
+      assert cached_ttl_ms() in 900..1_000
     end
 
     test "a Goth error is :unauthenticated and does not leak the response body" do
@@ -654,6 +726,263 @@ defmodule PubsubGrpc.AuthTest do
     end
   end
 
+  describe "Auth.Cache safety nets" do
+    test "refresh/2 returns :deadline_exceeded instead of exiting when the Cache is wedged" do
+      :sys.suspend(Cache)
+      on_exit(fn -> :sys.resume(Cache) end)
+
+      assert {:error, %Error{code: :deadline_exceeded}} =
+               Cache.refresh(fn -> {:error, Error.new(:unauthenticated, "unused")} end, 1)
+
+      :sys.resume(Cache)
+    end
+
+    # A caller that missed the ETS read can reach the Cache after another fetch
+    # stored a token: it must get that token, not start a second fetch.
+    test "refresh/2 returns a token cached meanwhile without fetching" do
+      put_fetcher(fn -> {:ok, "Bearer cached", 60_000} end)
+      assert {:ok, "Bearer cached"} = Auth.get_token()
+
+      assert {:ok, "Bearer cached"} = Cache.refresh(fn -> flunk("fetched") end, 1_000)
+    end
+
+    test "late results, :DOWN and timeouts of unknown fetches are ignored" do
+      ref = make_ref()
+      send(Cache, {ref, {:ok, "Bearer late", 60_000}})
+      send(Cache, {:DOWN, ref, :process, self(), :normal})
+      send(Cache, {:refresh_timeout, ref})
+
+      # Processed in order: the state read is a barrier.
+      assert %{inflight: nil} = :sys.get_state(Cache)
+      assert :miss = Cache.lookup()
+    end
+
+    test "clear/0, invalidate/1 and lookup/0 are no-ops while the Cache is down" do
+      :ok = Supervisor.terminate_child(PubsubGrpc.Supervisor, Cache)
+      on_exit(fn -> Supervisor.restart_child(PubsubGrpc.Supervisor, Cache) end)
+
+      assert :ok = Cache.clear()
+      assert :ok = Cache.invalidate("Bearer x")
+      assert :miss = Cache.lookup()
+
+      assert {:ok, _pid} = Supervisor.restart_child(PubsubGrpc.Supervisor, Cache)
+    end
+  end
+
+  describe "auth error paths" do
+    test "a fetcher that throws or exits is an :unauthenticated error tagged with the kind" do
+      for {fetcher, kind} <- [{fn -> throw(:boom) end, :throw}, {fn -> exit(:boom) end, :exit}] do
+        put_fetcher(fetcher)
+        Auth.clear_cache()
+
+        assert {:error,
+                %Error{
+                  code: :unauthenticated,
+                  message: "auth token fetch crashed",
+                  details: ^kind
+                }} =
+                 Auth.get_token()
+      end
+    end
+
+    test "Goth raising is :unauthenticated and logs neither the token nor the arguments" do
+      # A token without a type does not match handle_goth_result/1: FunctionClauseError,
+      # whose message would embed the token.
+      fake_goth(%Goth.Token{token: "ya29.untyped-secret", type: nil, expires: :never}, nil)
+
+      log =
+        capture_log(fn ->
+          assert {:error,
+                  %Error{
+                    code: :unauthenticated,
+                    message: "Goth authentication crashed",
+                    details: FunctionClauseError
+                  } = error} = Auth.get_token()
+
+          refute inspect(error, structs: false) =~ "untyped-secret"
+        end)
+
+      assert log =~ "Goth.fetch raised: FunctionClauseError"
+      refute log =~ "untyped-secret"
+    end
+
+    test "Goth errors are tagged by shape, never by content" do
+      expired = %Goth.Token{token: "ya29.old", type: "Bearer", expires: 0}
+
+      for {reason, tag} <- [
+            {:nxdomain, :nxdomain},
+            {{:http_error, "secret-body"}, :http_error},
+            {"secret-string", :unknown}
+          ] do
+        Auth.clear_cache()
+        fake_goth(expired, {:error, reason})
+
+        log =
+          capture_log(fn ->
+            assert {:error, %Error{code: :unauthenticated, details: ^tag}} = Auth.get_token()
+          end)
+
+        assert log =~ "Goth.fetch failed (#{inspect(tag)})"
+        refute log =~ "secret"
+      end
+    end
+
+    test "a Goth expiry that is a DateTime is honoured; nil or another value means 50 min" do
+      in_an_hour = DateTime.add(DateTime.utc_now(), 3_600)
+
+      for {expires, expected_ttl} <- [
+            {in_an_hour, 3_540_000},
+            {nil, 3_000_000},
+            {"tomorrow", 3_000_000}
+          ] do
+        Auth.clear_cache()
+        fake_goth(%Goth.Token{token: "ya29.t", type: "Bearer", expires: expires}, nil)
+
+        assert {:ok, "Bearer ya29.t"} = Auth.get_token()
+        assert_in_delta cached_ttl_ms(), expected_ttl, 2_000
+      end
+    end
+  end
+
+  describe "refresh-ahead" do
+    # First fetch: "Bearer t1" at once. Later fetches block (see blocking_fetcher/2),
+    # then return `later`.
+    defp first_then_blocking(counter, later) do
+      blocking = blocking_fetcher(counter, later)
+
+      fn ->
+        if :counters.get(counter, 1) == 0 do
+          :counters.add(counter, 1, 1)
+          {:ok, "Bearer t1", 60_000}
+        else
+          blocking.()
+        end
+      end
+    end
+
+    test "a token is due 5 minutes before expiry, or after 90% of a short lifetime" do
+      for {ttl, margin} <- [{3_600_000, 300_000}, {60_000, 6_000}, {1_000, 100}] do
+        Auth.clear_cache()
+        put_fetcher(fn -> {:ok, "Bearer t", ttl} end)
+        assert {:ok, "Bearer t"} = Auth.get_token()
+
+        [{:token, "Bearer t", expires_at, refresh_at}] = :ets.lookup(Cache.table(), :token)
+        assert expires_at - refresh_at == margin
+      end
+    end
+
+    test "a due token is served while exactly one background fetch replaces it" do
+      counter = :counters.new(1, [])
+      put_fetcher(first_then_blocking(counter, {:ok, "Bearer t2", 60_000}))
+      attach_auth_stop_handler()
+
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      assert_receive {:auth_stop, %{result: :ok}}
+      make_refresh_due()
+
+      # Nobody waits for the background fetch.
+      callers = for _ <- 1..50, do: Task.async(&Auth.get_token/0)
+      assert Enum.all?(Task.await_many(callers), &(&1 == {:ok, "Bearer t1"}))
+
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
+      assert %{inflight: %{waiters: []}} = :sys.get_state(Cache)
+      send(fetch_pid, :release)
+
+      eventually(fn -> Cache.lookup() == {:ok, "Bearer t2", :fresh} end)
+      assert :counters.get(counter, 1) == 2
+      assert_receive {:auth_stop, %{result: :ok}}
+      refute_receive {:auth_stop, _}, 50
+    end
+
+    test "callers that miss while a refresh-ahead runs join it" do
+      counter = :counters.new(1, [])
+      put_fetcher(first_then_blocking(counter, {:ok, "Bearer t2", 60_000}))
+
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      make_refresh_due()
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
+
+      # The token expires before the background fetch returns.
+      expire_cached_token()
+      caller = Task.async(&Auth.get_token/0)
+      eventually(fn -> waiter_count() == 1 end)
+      send(fetch_pid, :release)
+
+      assert {:ok, "Bearer t2"} = Task.await(caller)
+      assert :counters.get(counter, 1) == 2
+    end
+
+    test "a failed refresh-ahead keeps serving the token and backs off before retrying" do
+      counter = :counters.new(1, [])
+      error = {:error, Error.new(:unavailable, "metadata server down")}
+      put_fetcher(first_then_blocking(counter, error))
+
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      make_refresh_due()
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
+      send(fetch_pid, :release)
+      eventually(fn -> match?(%{inflight: nil, failure: %{}}, :sys.get_state(Cache)) end)
+
+      # Inside the backoff: still served, not due, no new fetch. The window is pushed
+      # a minute ahead so the assertions do not depend on the real 1 s backoff.
+      extend_backoff()
+      update_cached_row(4, now_ms() + 60_000)
+      for _ <- 1..10, do: assert({:ok, "Bearer t1"} = Auth.get_token())
+      assert {:ok, "Bearer t1", :fresh} = Cache.lookup()
+      assert :counters.get(counter, 1) == 2
+
+      # Once the backoff has passed, the token is due again and refreshed ahead.
+      expire_backoff()
+      make_refresh_due()
+      assert {:ok, "Bearer t1"} = Auth.get_token()
+      assert_receive {:fetch_started, fetch_pid}, @cross_process_timeout
+      send(fetch_pid, :release)
+      eventually(fn -> match?(%{inflight: nil}, :sys.get_state(Cache)) end)
+    end
+  end
+
+  describe "negative cache" do
+    test "the backoff starts at 1 s, doubles per consecutive failure up to 5 s, resets on success" do
+      counter = :counters.new(1, [])
+
+      put_fetcher(fn ->
+        :counters.add(counter, 1, 1)
+        {:error, Error.new(:unauthenticated, "nope")}
+      end)
+
+      backoffs =
+        for _ <- 1..5 do
+          assert {:error, %Error{message: "nope"}} = Auth.get_token()
+          %{failure: %{backoff: backoff}} = :sys.get_state(Cache)
+          expire_backoff()
+          backoff
+        end
+
+      assert backoffs == [1_000, 2_000, 4_000, 5_000, 5_000]
+      assert :counters.get(counter, 1) == 5
+
+      put_fetcher(fn -> {:ok, "Bearer ok", 60_000} end)
+      assert {:ok, "Bearer ok"} = Auth.get_token()
+      assert %{failure: nil} = :sys.get_state(Cache)
+    end
+
+    test "clear_cache/0 drops the backoff" do
+      counter = :counters.new(1, [])
+
+      put_fetcher(fn ->
+        :counters.add(counter, 1, 1)
+        {:error, Error.new(:unauthenticated, "nope")}
+      end)
+
+      assert {:error, _} = Auth.get_token()
+      assert :ok = Auth.clear_cache()
+      assert {:error, _} = Auth.get_token()
+      assert :counters.get(counter, 1) == 2
+    end
+  end
+
   # Starts a real Goth whose HTTP client always answers `status`/`body`, and
   # points :pubsub_grpc at it.
   defp start_goth(status, body) do
@@ -672,6 +1001,40 @@ defmodule PubsubGrpc.AuthTest do
     })
 
     Application.put_env(:pubsub_grpc, :goth, name)
+  end
+
+  # Rewrites element `pos` of the cached row from inside Auth.Cache, the only
+  # process allowed to write its :protected table: 3 is the expiry, 4 the time
+  # from which the token is due for a refresh-ahead (monotonic ms).
+  defp update_cached_row(pos, value) do
+    :sys.replace_state(Cache, fn state ->
+      true = :ets.update_element(Cache.table(), :token, {pos, value})
+      state
+    end)
+  end
+
+  # Monotonic time can be negative: "now" is the only safe past instant.
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  defp make_refresh_due, do: update_cached_row(4, now_ms())
+  defp expire_cached_token, do: update_cached_row(3, now_ms())
+
+  # Ends the current failure backoff without waiting for it.
+  defp expire_backoff do
+    until = now_ms()
+
+    :sys.replace_state(Cache, fn %{failure: failure} = state ->
+      %{state | failure: %{failure | until: until}}
+    end)
+  end
+
+  # Pushes the current failure backoff a minute ahead.
+  defp extend_backoff do
+    until = now_ms() + 60_000
+
+    :sys.replace_state(Cache, fn %{failure: failure} = state ->
+      %{state | failure: %{failure | until: until}}
+    end)
   end
 
   @doc false
@@ -703,6 +1066,40 @@ defmodule PubsubGrpc.AuthTest do
         :release -> result
       end
     end
+  end
+
+  # Registers a fake Goth under a unique name and points :pubsub_grpc at it.
+  # `Goth.fetch/1` reads `token` straight from the registry unless it has an
+  # integer `expires` in the past; then it calls the process, which answers
+  # `fetch_reply`.
+  defp fake_goth(token, fetch_reply) do
+    name = :"pubsub_grpc_fake_goth_#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    pid =
+      spawn_link(fn ->
+        {:ok, _} = Registry.register(Goth.Registry, name, token)
+        send(test_pid, {:fake_goth_registered, self()})
+        fake_goth_loop(fetch_reply)
+      end)
+
+    assert_receive {:fake_goth_registered, ^pid}
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    Application.put_env(:pubsub_grpc, :goth, name)
+  end
+
+  defp fake_goth_loop(fetch_reply) do
+    receive do
+      {:"$gen_call", from, :fetch} ->
+        GenServer.reply(from, fetch_reply)
+        fake_goth_loop(fetch_reply)
+    end
+  end
+
+  # The row's third element is the expiry (monotonic ms), whatever follows it.
+  defp cached_ttl_ms do
+    [row] = :ets.lookup(Cache.table(), :token)
+    elem(row, 2) - System.monotonic_time(:millisecond)
   end
 
   defp waiter_count do

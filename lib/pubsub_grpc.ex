@@ -9,23 +9,38 @@ defmodule PubsubGrpc do
 
   ### Production (Google Cloud)
 
-      # Option 1: Goth Library (Recommended)
-      config :pubsub_grpc, :goth, MyApp.Goth
+  Tokens come from one of two sources:
 
-      # Option 2: gcloud CLI (auto-detected)
-      # Option 3: GOOGLE_APPLICATION_CREDENTIALS env var
-      # Option 4: GCE/GKE metadata (automatic)
+    * [Goth](https://hex.pm/packages/goth) (recommended). Start a Goth process in
+      your supervision tree and point the library at it:
+
+          config :pubsub_grpc, :goth, MyApp.Goth
+
+      GCE/GKE metadata and service account keys (e.g. the file named by
+      `GOOGLE_APPLICATION_CREDENTIALS`) work through Goth's sources:
+      `source: {:metadata, []}` or `source: {:service_account, credentials}`.
+    * The gcloud CLI (`gcloud auth application-default print-access-token`), used
+      when `:goth` is not set. For development only: each refresh forks a `gcloud`
+      process.
+
+  Tokens are cached and refreshed in the background shortly before they expire.
 
   ### Development/Test (Local Emulator)
 
-      config :pubsub_grpc, :emulator,
-        project_id: "my-project-id",
-        host: "localhost",
-        port: 8085
+      config :pubsub_grpc, :emulator, host: "localhost", port: 8085
+
+  ### Pool size
+
+  The pool has 5 connections by default (`config :pubsub_grpc, :default_pool_size, n`,
+  or `pool: [size: n]` under `config :pubsub_grpc, GrpcConnectionPool`). grpc
+  serializes request starts per connection process, and a long-polling `pull/4`
+  holds a connection's stream until it returns, so size the pool to at least
+  your number of concurrent pulls plus headroom for other calls.
 
   ### Timeouts
 
-      # Global default (30s by default)
+      # Global default (30s by default): a positive integer (ms) or :infinity,
+      # read at application start. An invalid value fails startup.
       config :pubsub_grpc, :default_timeout, 30_000
 
   ### Supervising the connection pool yourself
@@ -54,7 +69,10 @@ defmodule PubsubGrpc do
       the `:default_timeout` app env, 30_000). Waits before the call are not
       included and come on top of it: up to `min(timeout, 2_000)` for a pool
       connection when none is ready, and up to `:auth_timeout` (10 s by
-      default) for a token fetch on a cache miss.
+      default) for a token fetch on a cache miss. `:timeout` bounds the RPC
+      deadline only: when the connection process is unresponsive, the call can
+      block up to ~5 s more (grpc gun adapter) and then returns
+      `{:error, %PubsubGrpc.Error{code: :unavailable}}`.
     * `:pool` - name of the connection pool to use (default: the configured pool,
       `PubsubGrpc.ConnectionPool` unless set in `config :pubsub_grpc, GrpcConnectionPool`).
       The auth token is attached only if the checked-out connection uses TLS, so
@@ -62,7 +80,10 @@ defmodule PubsubGrpc do
       trusted Google endpoints.
 
   Operations with their own options (e.g. `list_topics/2`, `pull/4`) accept the
-  common options in the same keyword list.
+  common options in the same keyword list. Option keys an operation does not
+  accept, and ill-typed values (e.g. `timeout: "5s"`), are rejected with
+  `{:error, %PubsubGrpc.Error{code: :validation_error}}` before any request is
+  made. Duplicate keys are allowed; the first one wins.
 
   ## Request limits
 
@@ -112,6 +133,11 @@ defmodule PubsubGrpc do
   alias PubsubV1.Publisher.Stub, as: PublisherStub
   alias PubsubV1.Subscriber.Stub, as: SubscriberStub
 
+  # Per-call option keys accepted by each kind of operation.
+  @common_opts [:timeout, :pool]
+  @list_opts @common_opts ++ [:page_size, :page_token]
+  @create_subscription_opts @common_opts ++ [:ack_deadline_seconds]
+
   @typedoc "A Pub/Sub topic (`%PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}`)."
   @type topic :: %PubsubGrpc.Proto.Google.Pubsub.V1.Topic{}
 
@@ -149,6 +175,20 @@ defmodule PubsubGrpc do
     Supervisor.child_spec({GrpcConnectionPool, Config.pool_config()}, id: __MODULE__)
   end
 
+  @doc """
+  Status of the connection pool, as reported by `GrpcConnectionPool.status/1`
+  (e.g. `%{status: :healthy, current_size: 5, expected_size: 5, ...}`, or
+  `%{error: :pool_not_found}` if the pool is not running).
+
+  ## Options
+  - `:pool` - pool name (default: the configured pool, `PubsubGrpc.ConnectionPool`
+    unless set in `config :pubsub_grpc, GrpcConnectionPool`)
+  """
+  @spec pool_status(keyword()) :: map()
+  def pool_status(opts \\ []) do
+    GrpcConnectionPool.status(opts[:pool] || Config.pool_name())
+  end
+
   # Topics
 
   @doc """
@@ -175,7 +215,8 @@ defmodule PubsubGrpc do
 
   defp do_create_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.Topic{name: Request.topic_path(project_id, topic_id)}
 
       fn channel, grpc_opts -> PublisherStub.create_topic(channel, request, grpc_opts) end
@@ -204,7 +245,8 @@ defmodule PubsubGrpc do
 
   defp do_get_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.GetTopicRequest{topic: Request.topic_path(project_id, topic_id)}
 
       fn channel, grpc_opts -> PublisherStub.get_topic(channel, request, grpc_opts) end
@@ -232,7 +274,8 @@ defmodule PubsubGrpc do
 
   defp do_delete_topic(project_id, topic_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_topic_id(topic_id) do
+         {:ok, _} <- Validation.validate_topic_id(topic_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.DeleteTopicRequest{topic: Request.topic_path(project_id, topic_id)}
 
       fn channel, grpc_opts -> PublisherStub.delete_topic(channel, request, grpc_opts) end
@@ -262,12 +305,11 @@ defmodule PubsubGrpc do
   end
 
   defp do_list_topics(project_id, opts) do
-    with {:ok, _} <- Validation.validate_project_id(project_id) do
-      request = %PubsubV1.ListTopicsRequest{
-        project: Request.project_path(project_id),
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @list_opts) do
+      request =
+        %PubsubV1.ListTopicsRequest{project: Request.project_path(project_id)}
+        |> struct!(Request.page_fields(opts))
 
       fn channel, grpc_opts -> PublisherStub.list_topics(channel, request, grpc_opts) end
       |> Request.execute(opts)
@@ -308,8 +350,7 @@ defmodule PubsubGrpc do
     message_count =
       case prepared do
         {:ok, _messages, count} -> count
-        {:error, _} when is_list(messages) -> length(messages)
-        {:error, _} -> 0
+        {:error, _} -> Validation.list_length(messages)
       end
 
     Telemetry.span(
@@ -322,7 +363,8 @@ defmodule PubsubGrpc do
   defp do_publish(project_id, topic_id, prepared, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
-         {:ok, pubsub_messages, _count} <- prepared do
+         {:ok, pubsub_messages, _count} <- prepared,
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.PublishRequest{
         topic: Request.topic_path(project_id, topic_id),
         messages: pubsub_messages
@@ -330,10 +372,7 @@ defmodule PubsubGrpc do
 
       fn channel, grpc_opts -> PublisherStub.publish(channel, request, grpc_opts) end
       |> Request.execute(opts)
-      |> case do
-        {:ok, {:ok, response}} -> {:ok, %{message_ids: response.message_ids}}
-        other -> Result.unwrap_error(other)
-      end
+      |> Result.unwrap_map(&%{message_ids: &1.message_ids})
     end
   end
 
@@ -360,8 +399,6 @@ defmodule PubsubGrpc do
   def publish_message(project_id, topic_id, data, attributes, opts) do
     publish(project_id, topic_id, [%{data: data, attributes: attributes}], opts)
   end
-
-  @common_opts [:timeout, :pool]
 
   defp common_opts?(list) do
     Keyword.keyword?(list) and Enum.all?(list, fn {key, _} -> key in @common_opts end)
@@ -392,11 +429,11 @@ defmodule PubsubGrpc do
   end
 
   defp do_create_subscription(project_id, topic_id, subscription_id, opts) do
-    ack_deadline = Keyword.get(opts, :ack_deadline_seconds, 60)
-
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_topic_id(topic_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @create_subscription_opts),
+         ack_deadline = Keyword.get(opts, :ack_deadline_seconds, 60),
          {:ok, _} <- Validation.validate_ack_deadline(ack_deadline) do
       request = %PubsubV1.Subscription{
         name: Request.subscription_path(project_id, subscription_id),
@@ -432,7 +469,8 @@ defmodule PubsubGrpc do
 
   defp do_get_subscription(project_id, subscription_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_subscription_id(subscription_id) do
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.GetSubscriptionRequest{
         subscription: Request.subscription_path(project_id, subscription_id)
       }
@@ -463,7 +501,8 @@ defmodule PubsubGrpc do
 
   defp do_delete_subscription(project_id, subscription_id, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
-         {:ok, _} <- Validation.validate_subscription_id(subscription_id) do
+         {:ok, _} <- Validation.validate_subscription_id(subscription_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.DeleteSubscriptionRequest{
         subscription: Request.subscription_path(project_id, subscription_id)
       }
@@ -495,12 +534,11 @@ defmodule PubsubGrpc do
   end
 
   defp do_list_subscriptions(project_id, opts) do
-    with {:ok, _} <- Validation.validate_project_id(project_id) do
-      request = %PubsubV1.ListSubscriptionsRequest{
-        project: Request.project_path(project_id),
-        page_size: Keyword.get(opts, :page_size, 0),
-        page_token: Keyword.get(opts, :page_token, "")
-      }
+    with {:ok, _} <- Validation.validate_project_id(project_id),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @list_opts) do
+      request =
+        %PubsubV1.ListSubscriptionsRequest{project: Request.project_path(project_id)}
+        |> struct!(Request.page_fields(opts))
 
       fn channel, grpc_opts -> SubscriberStub.list_subscriptions(channel, request, grpc_opts) end
       |> Request.execute(opts)
@@ -515,16 +553,32 @@ defmodule PubsubGrpc do
 
   ## Parameters
   - `max_messages` - Maximum number of messages to pull (default: 10, must be
-    positive). Pub/Sub returns at most 1,000 messages per pull.
+    positive). Pub/Sub returns at most 1,000 messages per pull. Without it,
+    `opts` can be passed in its place: `pull(project_id, subscription_id, timeout: 5_000)`.
   - `opts` - [common options](#module-common-options)
 
   ## Returns
   - `{:ok, [%PubsubGrpc.Proto.Google.Pubsub.V1.ReceivedMessage{}]}`
 
+  ## Long polling
+
+  On an empty subscription the server can hold the request open until messages
+  arrive or the deadline passes, so a pull can take the full `:timeout`
+  (default: the `:default_timeout` app env, 30 s) and occupies a pool
+  connection meanwhile. When calling `pull` inside a `GenServer.call` or other
+  bounded wait, pass a `:timeout` below that bound. Size the pool for your
+  concurrent long polls (see "Pool size" in the module docs).
+
   """
-  @spec pull(String.t(), String.t(), pos_integer(), keyword()) ::
+  @spec pull(String.t(), String.t(), pos_integer() | keyword(), keyword()) ::
           {:ok, list()} | {:error, Error.t()}
-  def pull(project_id, subscription_id, max_messages \\ 10, opts \\ []) do
+  def pull(project_id, subscription_id, max_messages \\ 10, opts \\ [])
+
+  def pull(project_id, subscription_id, opts, []) when is_list(opts) do
+    pull(project_id, subscription_id, 10, opts)
+  end
+
+  def pull(project_id, subscription_id, max_messages, opts) do
     Telemetry.span(
       :pull,
       %{
@@ -539,7 +593,8 @@ defmodule PubsubGrpc do
   defp do_pull(project_id, subscription_id, max_messages, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_max_messages(max_messages) do
+         {:ok, _} <- Validation.validate_max_messages(max_messages),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.PullRequest{
         subscription: Request.subscription_path(project_id, subscription_id),
         max_messages: max_messages
@@ -547,10 +602,7 @@ defmodule PubsubGrpc do
 
       fn channel, grpc_opts -> SubscriberStub.pull(channel, request, grpc_opts) end
       |> Request.execute(opts)
-      |> case do
-        {:ok, {:ok, response}} -> {:ok, response.received_messages}
-        other -> Result.unwrap_error(other)
-      end
+      |> Result.unwrap_map(& &1.received_messages)
     end
   end
 
@@ -569,23 +621,26 @@ defmodule PubsubGrpc do
   @spec acknowledge(String.t(), String.t(), [String.t()], keyword()) ::
           :ok | {:error, Error.t()}
   def acknowledge(project_id, subscription_id, ack_ids, opts \\ []) do
-    ack_count = if is_list(ack_ids), do: length(ack_ids), else: 0
+    # Validates and counts the ack IDs in one pass, before the span, so the span
+    # metadata can carry the count.
+    prepared = Validation.validate_ack_ids(ack_ids)
 
     Telemetry.span(
       :acknowledge,
       %{
         project_id: project_id,
         subscription_id: subscription_id,
-        ack_count: ack_count
+        ack_count: ack_count(prepared)
       },
-      fn -> do_acknowledge(project_id, subscription_id, ack_ids, opts) end
+      fn -> do_acknowledge(project_id, subscription_id, ack_ids, prepared, opts) end
     )
   end
 
-  defp do_acknowledge(project_id, subscription_id, ack_ids, opts) do
+  defp do_acknowledge(project_id, subscription_id, ack_ids, prepared, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_ack_ids(ack_ids) do
+         {:ok, _count} <- prepared,
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.AcknowledgeRequest{
         subscription: Request.subscription_path(project_id, subscription_id),
         ack_ids: ack_ids
@@ -621,31 +676,42 @@ defmodule PubsubGrpc do
         ) ::
           :ok | {:error, Error.t()}
   def modify_ack_deadline(project_id, subscription_id, ack_ids, ack_deadline_seconds, opts \\ []) do
-    ack_count = if is_list(ack_ids), do: length(ack_ids), else: 0
+    prepared = Validation.validate_ack_ids(ack_ids)
 
     Telemetry.span(
       :modify_ack_deadline,
       %{
         project_id: project_id,
         subscription_id: subscription_id,
-        ack_count: ack_count,
+        ack_count: ack_count(prepared),
         ack_deadline_seconds: ack_deadline_seconds
       },
       fn ->
-        do_modify_ack_deadline(project_id, subscription_id, ack_ids, ack_deadline_seconds, opts)
+        do_modify_ack_deadline(
+          project_id,
+          subscription_id,
+          ack_ids,
+          prepared,
+          ack_deadline_seconds,
+          opts
+        )
       end
     )
   end
 
-  defp do_modify_ack_deadline(project_id, subscription_id, ack_ids, ack_deadline_seconds, opts) do
+  defp ack_count({:ok, count}), do: count
+  defp ack_count({:error, _}), do: 0
+
+  defp do_modify_ack_deadline(project_id, subscription_id, ack_ids, prepared, deadline, opts) do
     with {:ok, _} <- Validation.validate_project_id(project_id),
          {:ok, _} <- Validation.validate_subscription_id(subscription_id),
-         {:ok, _} <- Validation.validate_ack_ids(ack_ids),
-         {:ok, _} <- Validation.validate_ack_deadline_with_zero(ack_deadline_seconds) do
+         {:ok, _count} <- prepared,
+         {:ok, _} <- Validation.validate_ack_deadline_with_zero(deadline),
+         {:ok, opts} <- Validation.validate_request_opts(opts, @common_opts) do
       request = %PubsubV1.ModifyAckDeadlineRequest{
         subscription: Request.subscription_path(project_id, subscription_id),
         ack_ids: ack_ids,
-        ack_deadline_seconds: ack_deadline_seconds
+        ack_deadline_seconds: deadline
       }
 
       fn channel, grpc_opts -> SubscriberStub.modify_ack_deadline(channel, request, grpc_opts) end
@@ -686,6 +752,9 @@ defmodule PubsubGrpc do
   - `{:ok, result}` - the callback returned `{:ok, result}`
   - `{:error, %PubsubGrpc.Error{}}` - the callback returned `{:error, reason}`,
     or no connection could be checked out from the pool
+  - `{:error, %PubsubGrpc.Error{code: :unavailable}}` - the connection process
+    exited during the callback's gRPC call (busy or dead); the raw exit reason,
+    which embeds the request headers, is discarded
   - `{:ok, value}` - the callback returned any other value (e.g. `:ok` or a map)
 
   ## Examples
@@ -702,7 +771,10 @@ defmodule PubsubGrpc do
   @spec execute((channel() -> term()), keyword()) ::
           {:ok, term()} | {:error, Error.t()}
   def execute(operation_fn, opts \\ []) when is_function(operation_fn, 1) do
-    Client.execute(operation_fn, opts) |> Result.unwrap_any()
+    case Validation.validate_request_opts(opts, @common_opts) do
+      {:ok, opts} -> Client.execute(operation_fn, opts) |> Result.unwrap_any()
+      {:error, _} = error -> error
+    end
   end
 
   @doc """
