@@ -28,7 +28,7 @@ defmodule PubsubGrpcConnectionTest do
 
   test "the application pool serves requests on the default path" do
     # Only one connection is awaited at startup (test_helper.exs); :healthy needs all.
-    eventually(fn -> Client.status().status == :healthy end)
+    eventually(fn -> PubsubGrpc.pool_status().status == :healthy end)
     assert {:ok, %{topics: topics}} = PubsubGrpc.list_topics("test-project-id")
     assert is_list(topics)
   end
@@ -63,11 +63,11 @@ defmodule PubsubGrpcConnectionTest do
              Client.execute(fn _ -> {:ok, "after_error"} end, pool: pool)
   end
 
-  test "status/1 reports a healthy dedicated pool", %{pool: pool} do
+  test "pool_status/1 reports a healthy dedicated pool", %{pool: pool} do
     # await_ready/2 returns once one channel is up; :healthy needs all of them.
     status =
       eventually(fn ->
-        status = Client.status(pool: pool)
+        status = PubsubGrpc.pool_status(pool: pool)
         status.current_size == 2 && status
       end)
 

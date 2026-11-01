@@ -13,7 +13,8 @@ defmodule PubsubGrpc.Config do
 
   @default_pool_name PubsubGrpc.ConnectionPool
   @default_auth_timeout 10_000
-  @default_legacy_pool_size 5
+  @default_timeout 30_000
+  @default_pool_size 5
   @pubsub_host "pubsub.googleapis.com"
   @key {__MODULE__, :resolved}
 
@@ -23,11 +24,10 @@ defmodule PubsubGrpc.Config do
           pool_config: GrpcConnectionPool.Config.t(),
           pool_name: atom(),
           endpoint_type: endpoint_type(),
-          source: :app_env | :legacy
+          source: :app_env | :default,
+          default_timeout: timeout(),
+          start_pool: boolean()
         }
-
-  @spec default_pool_name() :: atom()
-  def default_pool_name, do: @default_pool_name
 
   # Readers
 
@@ -64,6 +64,19 @@ defmodule PubsubGrpc.Config do
     end
   end
 
+  @doc """
+  The `:default_timeout` app env in milliseconds (or `:infinity`), resolved at
+  application start. `resolve/1` rejects an invalid value; if the configuration
+  cannot be resolved (e.g. the application is not started and the env is
+  invalid), the default (30_000) is used instead.
+  """
+  @spec default_timeout() :: timeout()
+  def default_timeout do
+    current().default_timeout
+  rescue
+    _ in [ArgumentError, ErlangError] -> @default_timeout
+  end
+
   @spec emulator?() :: boolean()
   def emulator?, do: endpoint_type() == :local
 
@@ -92,7 +105,7 @@ defmodule PubsubGrpc.Config do
     {source, pool_config} =
       case Keyword.fetch(env, GrpcConnectionPool) do
         {:ok, opts} -> {:app_env, from_app_env!(opts, env)}
-        :error -> {:legacy, from_legacy!(env)}
+        :error -> {:default, from_defaults!(env)}
       end
 
     endpoint_type = if pool_config.endpoint.type == :local, do: :local, else: :production
@@ -103,7 +116,9 @@ defmodule PubsubGrpc.Config do
       pool_config: pool_config,
       pool_name: pool_config.pool.name,
       endpoint_type: endpoint_type,
-      source: source
+      source: source,
+      default_timeout: ensure_default_timeout!(env),
+      start_pool: Keyword.get(env, :start_pool, true) != false
     }
   end
 
@@ -158,8 +173,10 @@ defmodule PubsubGrpc.Config do
     end
   end
 
-  defp from_legacy!(env) do
-    pool_size = Keyword.get(env, :default_pool_size, @default_legacy_pool_size)
+  # No `GrpcConnectionPool` key: production Pub/Sub, or the emulator when
+  # `:emulator` is a keyword list; `:default_pool_size` sets the pool size.
+  defp from_defaults!(env) do
+    pool_size = Keyword.get(env, :default_pool_size, @default_pool_size)
 
     opts =
       case Keyword.get(env, :emulator) do
@@ -193,7 +210,7 @@ defmodule PubsubGrpc.Config do
 
       {:error, reason} ->
         raise ArgumentError,
-              "PubsubGrpc: invalid legacy configuration (:emulator / :default_pool_size): " <>
+              "PubsubGrpc: invalid configuration (:emulator / :default_pool_size): " <>
                 "#{reason}. Fix those values or configure `config :pubsub_grpc, GrpcConnectionPool, ...`."
     end
   end
@@ -211,6 +228,19 @@ defmodule PubsubGrpc.Config do
               "PubsubGrpc: invalid `config :pubsub_grpc, :auth_timeout, #{inspect(other)}`: " <>
                 "it must be a positive integer (milliseconds). Remove it to use the " <>
                 "default (#{@default_auth_timeout})."
+    end
+  end
+
+  defp ensure_default_timeout!(env) do
+    case Keyword.get(env, :default_timeout, @default_timeout) do
+      timeout when (is_integer(timeout) and timeout > 0) or timeout == :infinity ->
+        timeout
+
+      other ->
+        raise ArgumentError,
+              "PubsubGrpc: invalid `config :pubsub_grpc, :default_timeout, #{inspect(other)}`: " <>
+                "it must be a positive integer (milliseconds) or :infinity. Remove it to use " <>
+                "the default (#{@default_timeout})."
     end
   end
 
@@ -234,6 +264,6 @@ defmodule PubsubGrpc.Config do
   # and Dialyzer flags a non-binary fallback clause as unreachable.
   defp invalid_app_env_message(reason) do
     "PubsubGrpc: invalid `config :pubsub_grpc, GrpcConnectionPool` (#{reason}). " <>
-      "Fix it, or remove the key to use the legacy :emulator / production defaults."
+      "Fix it, or remove the key to use the :emulator / production defaults."
   end
 end

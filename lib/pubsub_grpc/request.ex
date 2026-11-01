@@ -10,16 +10,16 @@ defmodule PubsubGrpc.Request do
 
   alias PubsubGrpc.{Auth, Client, Config}
 
-  @default_timeout 30_000
-
   @doc """
   Checks out a channel from `opts[:pool]` (default: the configured pool) and
-  runs `call/3` on it.
+  runs `call/3` on it. The timeout and pool are resolved once per request.
   """
   @spec execute((PubsubGrpc.channel(), keyword() -> term()), keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute(fun, opts) when is_function(fun, 2) do
-    Client.execute(&call(&1, fun, opts), pool: opts[:pool], timeout: timeout(opts))
+    timeout = timeout(opts)
+    pool = opts[:pool]
+    Client.execute(&do_call(&1, fun, timeout, pool), pool: pool, timeout: timeout)
   end
 
   @doc """
@@ -30,10 +30,12 @@ defmodule PubsubGrpc.Request do
   """
   @spec call(PubsubGrpc.channel(), (PubsubGrpc.channel(), keyword() -> term()), keyword()) ::
           term()
-  def call(channel, fun, opts) do
+  def call(channel, fun, opts), do: do_call(channel, fun, timeout(opts), opts[:pool])
+
+  defp do_call(channel, fun, timeout, pool) do
     with {:ok, auth_opts} <- Auth.request_opts(channel) do
-      result = fun.(channel, auth_opts ++ [timeout: timeout(opts)])
-      if configured_pool?(opts), do: invalidate_rejected_token(result, auth_opts)
+      result = fun.(channel, [{:timeout, timeout} | auth_opts])
+      if configured_pool?(pool), do: invalidate_rejected_token(result, auth_opts)
       result
     end
   end
@@ -42,8 +44,17 @@ defmodule PubsubGrpc.Request do
   The per-call `:timeout`, or the `:default_timeout` app env (30s by default).
   """
   @spec timeout(keyword()) :: timeout()
-  def timeout(opts) do
-    opts[:timeout] || Application.get_env(:pubsub_grpc, :default_timeout, @default_timeout)
+  def timeout(opts), do: opts[:timeout] || Config.default_timeout()
+
+  @doc """
+  The paging fields of a list request, from already validated `opts`.
+  """
+  @spec page_fields(keyword()) :: [page_size: non_neg_integer(), page_token: String.t()]
+  def page_fields(opts) do
+    [
+      page_size: Keyword.get(opts, :page_size) || 0,
+      page_token: Keyword.get(opts, :page_token) || ""
+    ]
   end
 
   @spec project_path(String.t()) :: String.t()
@@ -62,7 +73,7 @@ defmodule PubsubGrpc.Request do
   # The token cache is shared by every pool. Only a rejection from the configured
   # (Google) endpoint may evict it; a custom pool's endpoint answering
   # UNAUTHENTICATED must not force refetches for everyone.
-  defp configured_pool?(opts), do: opts[:pool] in [nil, Config.pool_name()]
+  defp configured_pool?(pool), do: pool in [nil, Config.pool_name()]
 
   # UNAUTHENTICATED (16): the token was rejected (revoked, rotated or expired
   # early). Drop it from the cache, unless a newer token has replaced it already.

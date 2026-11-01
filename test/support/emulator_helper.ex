@@ -13,8 +13,14 @@ defmodule PubsubGrpc.EmulatorHelper do
   @doc "Project ID used by the emulator tests."
   def project_id, do: @project_id
 
-  @doc "Returns a name that is unique within this VM run, e.g. `topic-42`."
-  def unique_name(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
+  @doc """
+  Returns a name that is unique across runs, e.g. `topic-k3x9q2mfa1-42`: a random
+  per-run token (set in `test_helper.exs`) plus a counter unique within the VM.
+  """
+  def unique_name(prefix) do
+    run_id = Application.fetch_env!(:pubsub_grpc, :test_run_id)
+    "#{prefix}-#{run_id}-#{System.unique_integer([:positive])}"
+  end
 
   @doc "Full topic resource path."
   def topic_path(topic_id), do: "projects/#{@project_id}/topics/#{topic_id}"

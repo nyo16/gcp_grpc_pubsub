@@ -60,6 +60,15 @@ defmodule PubsubGrpc.TelemetryTest do
 
       assert_received {:telemetry, [:pubsub_grpc, :request, :exception], _, %{operation: :bad}}
     end
+
+    test "classifies non-Error failures and unexpected return values" do
+      for {value, expected} <- [{{:error, :closed}, {:error, :unknown}}, {:weird, :unknown}] do
+        assert ^value = Telemetry.span(:odd, %{}, fn -> value end)
+
+        assert_received {:telemetry, [:pubsub_grpc, :request, :stop], _,
+                         %{operation: :odd, result: ^expected}}
+      end
+    end
   end
 
   describe "auth_span/2" do
@@ -130,6 +139,28 @@ defmodule PubsubGrpc.TelemetryTest do
         assert_received {:telemetry, [:pubsub_grpc, :request, :stop], _, stop_meta}
         assert MapSet.new(Map.keys(stop_meta)) == MapSet.put(expected, :result)
         assert stop_meta.result == {:error, :validation_error}
+      end
+    end
+  end
+
+  describe "count metadata for invalid input" do
+    test "message_count is the list length for invalid messages and 0 for a non-list" do
+      for {messages, count} <- [{[%{bad: 1}, %{bad: 2}], 2}, {:not_a_list, 0}] do
+        assert {:error, %Error{code: :validation_error}} =
+                 PubsubGrpc.publish("my-project", "topic", messages)
+
+        assert_received {:telemetry, [:pubsub_grpc, :request, :start], _,
+                         %{operation: :publish, message_count: ^count}}
+      end
+    end
+
+    test "ack_count is 0 for invalid ack IDs, including an improper list" do
+      for ack_ids <- [["ok", ""], ["a" | "b"], :not_a_list] do
+        assert {:error, %Error{code: :validation_error}} =
+                 PubsubGrpc.acknowledge("my-project", "sub", ack_ids)
+
+        assert_received {:telemetry, [:pubsub_grpc, :request, :start], _,
+                         %{operation: :acknowledge, ack_count: 0}}
       end
     end
   end

@@ -26,6 +26,13 @@ defmodule PubsubGrpc.Result do
   def unwrap_list(other, _items_key, _token_key), do: unwrap_error(other)
 
   @doc """
+  Like `unwrap/1`, but maps a successful response with `fun`.
+  """
+  @spec unwrap_map(client_result(), (term() -> term())) :: {:ok, term()} | {:error, Error.t()}
+  def unwrap_map({:ok, {:ok, response}}, fun), do: {:ok, fun.(response)}
+  def unwrap_map(other, _fun), do: unwrap_error(other)
+
+  @doc """
   Like `unwrap/1`, but for user callbacks that may return any value.
 
   `{:ok, r}` and `{:error, _}` callback results are normalized as in `unwrap/1`;

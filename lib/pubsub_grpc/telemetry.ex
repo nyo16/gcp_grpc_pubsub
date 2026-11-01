@@ -35,19 +35,28 @@ defmodule PubsubGrpc.Telemetry do
   | `:validate_message` | `:project_id`, `:schema_name`, `:encoding` |
   | `:validate_message_with_schema` | `:project_id`, `:schema_type`, `:encoding` |
 
-  The values are the arguments as passed (`:message_count` and `:ack_count` are
-  list lengths, `0` for a non-list).
+  The values are the arguments as passed, except the counts: `:message_count` is
+  the number of messages (the list length if they fail validation; `0` for a
+  non-list or an improper list) and `:ack_count` the number of ack IDs (`0` if
+  they are invalid).
 
   Stop metadata additionally contains `:result`: `:ok` on success,
   `{:error, code}` with the `PubsubGrpc.Error` code on failure.
+
+  `:exception` does not fire when the gRPC connection process exits during a
+  call (busy past grpc's 5 s call timeout, or dead): the operation returns
+  `{:error, %PubsubGrpc.Error{code: :unavailable}}` and the span stops with
+  `result: {:error, :unavailable}`.
 
   ## Auth events
 
   A token fetch emits `[:pubsub_grpc, :auth, :start | :stop | :exception]`, once per
   real fetch: cache hits emit nothing, and concurrent callers waiting for the same
-  fetch share one span. Start and stop metadata contain `:source`, one of
-  `:goth`, `:gcloud` or `:custom`; stop metadata also contains `:result`, with
-  the same shape as for request events.
+  fetch share one span. Start and stop metadata contain `:source`, `:goth` or
+  `:gcloud` (`:custom` only appears when the internal `:token_fetcher` test seam
+  is set); stop metadata also contains `:result`, with the same shape as for
+  request events. Background refreshes shortly before expiry are real fetches
+  and emit a span too.
 
   `:telemetry.span/3` also adds its own `:telemetry_span_context` key to all of
   these events.

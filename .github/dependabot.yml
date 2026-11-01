@@ -4,7 +4,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: mix
+    directory: /
+    schedule:
+      interval: weekly
+  # Tracks the emulator image pin in docker-compose.yml (the `docker` ecosystem only
+  # reads Dockerfiles). The same pin is copied into .github/workflows/elixir.yml,
+  # dev/mix/tasks/emulator.start.ex, test/test_helper.exs and README.md, which
+  # Dependabot cannot update: sync them by hand in the Dependabot PR.
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly

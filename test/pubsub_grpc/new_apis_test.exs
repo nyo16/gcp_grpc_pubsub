@@ -5,7 +5,9 @@ defmodule PubsubGrpc.NewApisTest do
   """
   use ExUnit.Case, async: true
 
-  import PubsubGrpc.EmulatorHelper, only: [unique_resources: 1, unique_name: 1, list_all: 2]
+  import PubsubGrpc.EmulatorHelper,
+    only: [unique_resources: 1, unique_name: 1, list_all: 2, list_all: 3]
+
   import PubsubGrpc.Eventually, only: [pull_until: 3]
 
   alias PubsubGrpc.Error
@@ -64,23 +66,23 @@ defmodule PubsubGrpc.NewApisTest do
              )
     end
 
+    # Walks every page one subscription at a time: both of this test's
+    # subscriptions must appear, and the token must advance (no name repeats).
     test "pages with page_size and page_token", %{topic_name: topic_name} do
       {:ok, _} = PubsubGrpc.create_topic(@project, topic_name)
 
-      for _ <- 1..2 do
-        sub = PubsubGrpc.EmulatorHelper.track_subscription(unique_name("test-subscription"))
-        {:ok, _} = PubsubGrpc.create_subscription(@project, topic_name, sub)
-      end
+      names =
+        for _ <- 1..2 do
+          sub = PubsubGrpc.EmulatorHelper.track_subscription(unique_name("test-subscription"))
+          {:ok, _} = PubsubGrpc.create_subscription(@project, topic_name, sub)
+          "projects/#{@project}/subscriptions/#{sub}"
+        end
 
-      assert {:ok, %{subscriptions: [first], next_page_token: token}} =
-               PubsubGrpc.list_subscriptions(@project, page_size: 1)
+      pages = list_all(:subscriptions, &PubsubGrpc.list_subscriptions(@project, &1), 1)
+      listed = Enum.map(pages, & &1.name)
 
-      assert token != ""
-
-      assert {:ok, %{subscriptions: [second]}} =
-               PubsubGrpc.list_subscriptions(@project, page_size: 1, page_token: token)
-
-      assert first.name != second.name
+      assert Enum.all?(names, &(&1 in listed))
+      assert listed == Enum.uniq(listed)
     end
   end
 

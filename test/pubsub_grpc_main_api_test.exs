@@ -38,9 +38,6 @@ defmodule PubsubGrpcMainApiTest do
     topic_name = track_topic(unique_name("list-test"))
     {:ok, _topic} = PubsubGrpc.create_topic(@project, topic_name)
 
-    assert {:ok, %{topics: _, next_page_token: token}} = PubsubGrpc.list_topics(@project)
-    assert is_binary(token)
-
     topics = list_all(:topics, &PubsubGrpc.list_topics(@project, &1))
     assert "projects/#{@project}/topics/#{topic_name}" in Enum.map(topics, & &1.name)
   end
@@ -192,5 +189,43 @@ defmodule PubsubGrpcMainApiTest do
     end
 
     assert {:error, %Error{code: :not_found}} = PubsubGrpc.execute(operation)
+  end
+
+  # Each operation's server error must come back mapped (unwrap vs unwrap_empty
+  # vs unwrap_map wiring), not only through the raw Client.
+  test "server errors are mapped per operation", %{
+    topic_name: topic,
+    subscription_name: sub
+  } do
+    {:ok, _} = PubsubGrpc.create_topic(@project, topic)
+    {:ok, _} = PubsubGrpc.create_subscription(@project, topic, sub)
+    missing_topic = unique_name("missing-topic")
+    missing_sub = unique_name("missing-sub")
+    orphan_sub = track_subscription(unique_name("orphan-sub"))
+
+    cases = [
+      {"create_topic duplicate", :already_exists,
+       fn -> PubsubGrpc.create_topic(@project, topic) end},
+      {"create_subscription duplicate", :already_exists,
+       fn -> PubsubGrpc.create_subscription(@project, topic, sub) end},
+      {"create_subscription for a missing topic", :not_found,
+       fn -> PubsubGrpc.create_subscription(@project, missing_topic, orphan_sub) end},
+      {"delete_topic missing", :not_found,
+       fn -> PubsubGrpc.delete_topic(@project, missing_topic) end},
+      {"delete_subscription missing", :not_found,
+       fn -> PubsubGrpc.delete_subscription(@project, missing_sub) end},
+      {"publish to a missing topic", :not_found,
+       fn -> PubsubGrpc.publish(@project, missing_topic, [%{data: "x"}]) end},
+      {"pull from a missing subscription", :not_found,
+       fn -> PubsubGrpc.pull(@project, missing_sub, 1, timeout: 5_000) end},
+      {"acknowledge on a missing subscription", :not_found,
+       fn -> PubsubGrpc.acknowledge(@project, missing_sub, ["ack"]) end},
+      {"modify_ack_deadline on a missing subscription", :not_found,
+       fn -> PubsubGrpc.modify_ack_deadline(@project, missing_sub, ["ack"], 10) end}
+    ]
+
+    for {name, code, call} <- cases do
+      assert {:error, %Error{code: ^code}} = call.(), name
+    end
   end
 end

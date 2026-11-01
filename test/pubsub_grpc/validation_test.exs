@@ -13,8 +13,12 @@ defmodule PubsubGrpc.ValidationTest do
             "a23456789012345678901234567890",
             "project-123",
             "123456789012",
+            "1",
+            "1234567890123456789",
             "example.com:my-project",
-            "sub.example.co.uk:legacy-app"
+            "sub.example.co.uk:legacy-app",
+            "a.b:xy",
+            "a-1.b-2:x-1"
           ] do
         assert {:ok, ^id} = Validation.validate_project_id(id)
       end
@@ -37,6 +41,11 @@ defmodule PubsubGrpc.ValidationTest do
             ":my-project",
             "example:my-project",
             "example.com:my-project-",
+            "example.com:x",
+            "-a.com:my-project",
+            "a-.com:my-project",
+            "a..com:my-project",
+            "example.com:my:project",
             "projects/my-project",
             "12345678901234567890"
           ] do
@@ -77,8 +86,17 @@ defmodule PubsubGrpc.ValidationTest do
   end
 
   describe "validate_topic_id/1" do
-    test "accepts valid topic ID" do
-      assert {:ok, "my-topic"} = Validation.validate_topic_id("my-topic")
+    test "accepts 3 to 255 chars starting with a letter, from letters/digits/-_.~+%" do
+      for id <- [
+            "my-topic",
+            "abc",
+            "Abc",
+            "Z12",
+            "a-_.~+%",
+            "a" <> String.duplicate("b", 254)
+          ] do
+        assert {:ok, ^id} = Validation.validate_topic_id(id), "expected #{inspect(id)} accepted"
+      end
     end
 
     test "rejects empty string" do
@@ -132,6 +150,15 @@ defmodule PubsubGrpc.ValidationTest do
   end
 
   describe "build_publish_messages/1" do
+    test "rejects non-string attribute keys or values instead of failing at encode time" do
+      for attributes <- [%{"k" => 1}, %{k: "v"}, %{"k" => nil}] do
+        assert {:error, %Error{code: :validation_error, message: message}} =
+                 Validation.build_publish_messages([%{data: "x", attributes: attributes}])
+
+        assert message =~ "string keys to string values"
+      end
+    end
+
     test "accepts messages with data, attributes, or both and builds PubsubMessages" do
       messages = [
         %{data: "hello"},
@@ -203,9 +230,12 @@ defmodule PubsubGrpc.ValidationTest do
   end
 
   describe "validate_ack_ids/1" do
-    test "accepts valid ack IDs" do
-      ids = ["id1", "id2"]
-      assert {:ok, ^ids} = Validation.validate_ack_ids(ids)
+    test "accepts valid ack IDs and returns their count" do
+      assert {:ok, 2} = Validation.validate_ack_ids(["id1", "id2"])
+    end
+
+    test "rejects an improper list instead of raising" do
+      assert {:error, %Error{code: :validation_error}} = Validation.validate_ack_ids(["a" | "b"])
     end
 
     test "rejects empty list" do
@@ -228,7 +258,7 @@ defmodule PubsubGrpc.ValidationTest do
       limit = Validation.max_ack_request_bytes()
       at_limit = [String.duplicate("a", limit - 1), "b"]
 
-      assert {:ok, ^at_limit} = Validation.validate_ack_ids(at_limit)
+      assert {:ok, 2} = Validation.validate_ack_ids(at_limit)
 
       assert {:error, %Error{code: :validation_error, message: message}} =
                Validation.validate_ack_ids(at_limit ++ ["c"])

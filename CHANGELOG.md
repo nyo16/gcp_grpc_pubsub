@@ -5,6 +5,114 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-01
+
+### Security
+- **Bearer token no longer leaks when a gRPC connection process is busy or dead.**
+  grpc's gun adapter calls its connection process with `GenServer.call/2` (5 s timeout).
+  When that call exited, the exit reason, which embeds the request headers (including
+  `authorization: Bearer <token>`) and the request body, escaped every public operation
+  as an exit and was logged at `:error` by grpc's `GRPC.Telemetry`. Found by the
+  2026-10-31 project health audit.
+  - `PubsubGrpc.execute/2` and every operation now catch the exit and return
+    `{:error, %PubsubGrpc.Error{code: :unavailable}}`; `details` holds only an atom tag
+    (`:timeout`, `:noproc`, `:shutdown`, …). The request span stops with
+    `result: {:error, :unavailable}` instead of firing `:exception`.
+  - The application installs a `:logger` primary filter that rewrites `Bearer <token>`
+    to `Bearer [REDACTED]` in log events emitted by `GRPC.Telemetry` (grpc logs the exit
+    before the library can catch it). Other log events are untouched.
+
+  Residual risk: grpc's own `[:grpc, :client, :rpc, :exception]` telemetry event still
+  carries the raw exit reason. Do not log its metadata verbatim.
+
+### Breaking Changes
+- **Per-call options are validated.** Every operation (and `execute/2`) now returns
+  `{:error, %PubsubGrpc.Error{code: :validation_error}}` before any request when `opts`
+  is not a keyword list, contains a key the operation does not accept (e.g. a typo such
+  as `ack_deadline:` for `ack_deadline_seconds:`, previously ignored silently), or has an
+  ill-typed value: `:timeout` must be a positive integer or `:infinity`, `:pool` an atom,
+  `:page_size` a non-negative int32, `:page_token` a string. `nil` still means the default
+  for `:timeout`, `:pool`, `:view`, `:page_size` and `:page_token`, and duplicate keys are
+  still allowed (the first wins).
+- **Arguments that used to raise are validation errors**: a non-binary schema
+  `definition` or validated `message`, non-string message attribute keys or values, a
+  struct as message `attributes`, and an improper `messages` or `ack_ids` list.
+- **The `grpc_connection_pool` requirement is raised to `~> 0.5.5`**, which declares
+  `cowlib >= 2.21.0` and `protobuf >= 0.17.1` as security floors, so `mix deps.update
+  pubsub_grpc` alone now picks up those fixes.
+- **`config :pubsub_grpc, :default_timeout`** is validated at startup (positive integer
+  or `:infinity`; an invalid value fails application start) and read once there; changing
+  it at runtime with `Application.put_env/3` no longer has an effect.
+- **Failed token fetches are negatively cached**: for 1 s, doubling up to 5 s on
+  consecutive failures, callers get the same error without a new fetch (no gcloud fork
+  per request while credentials are broken). `PubsubGrpc.Auth.clear_cache/0` drops the
+  backoff.
+
+### Added
+- **`:unavailable` error code** for connection-process exits (see Security).
+- **`config :pubsub_grpc, :redact_grpc_logs, false`** opts out of the log redaction
+  filter (default `true`), e.g. when the host app already redacts its logs.
+- **Auth tokens are refreshed in the background before they expire** (5 minutes before,
+  or 10% of the lifetime for short-lived tokens). The current token is served meanwhile,
+  so requests no longer stall on a fetch at each expiry (about 1–2 s per gcloud fork).
+- **`PubsubGrpc.pool_status/1`** (option `:pool`): the status of the configured pool,
+  instead of hard-coding `PubsubGrpc.ConnectionPool`.
+- **`pull/3` accepts options in place of `max_messages`**: `pull(project, sub, timeout:
+  5_000)` pulls 10 messages, like `publish_message/4`.
+- **`t:PubsubGrpc.Error.code/0` type** enumerating every code; the moduledoc lists the
+  library's own codes.
+
+### Changed
+- **Goth tokens close to expiry are cached for at least 1 s** (capped at their real
+  remaining life) instead of not at all.
+- **`:ack_count` telemetry metadata is `0` when the ack IDs are invalid** (was the list
+  length). Ack IDs are validated and counted in one pass, which no longer raises on an
+  improper list.
+- **ID validation no longer uses module-attribute regexes** (re-imported on every call on
+  OTP 28+): project and resource ID checks are 6–16× faster.
+- **The application supervisor sets `max_seconds: 5` explicitly** (the OTP default).
+- **The startup log says "configured from defaults"** (was "legacy config"); the
+  `:emulator` shorthand is documented as supported, without the never-read `project_id:`.
+- **CI** runs weekly and on manual dispatch, fails the audit job once cowlib releases a
+  version newer than 2.21.0, and publishes only on tag pushes. The advisory ignore list is
+  `CVE-2026-43966` alone (Hex matches its cowlib and gun aliases). The emulator image is
+  pinned by digest, and Dependabot groups action updates and tracks the image in
+  `docker-compose.yml`. Actions bumped to `actions/checkout` 7.0.1, `actions/cache`
+  (incl. `restore`/`save`) 6.1.0 and `actions/upload-artifact` 7.0.1, which run on
+  Node 24 natively, so the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` override is gone.
+- **`mix emulator.start` / `mix emulator.stop`** (repository only) exit non-zero on Docker
+  failures, and `emulator.start` matches the container name exactly.
+
+### Fixed
+- **No undefined-module warning for `Goth` when compiling without the optional `goth`
+  dependency.** CI now also compiles with `--no-optional-deps --warnings-as-errors`, and
+  test runs fail on compile warnings.
+
+### Deprecated
+- **`PubsubGrpc.Auth.request_opts/0`**: use `request_opts/1`, which decides per channel and
+  never sends a token over plaintext. It will be removed in v0.9.0.
+
+### Removed
+- Internal (`@moduledoc false`) `PubsubGrpc.Client.with_connection/2` (deprecated) and
+  `PubsubGrpc.Client.status/1`, and `PubsubGrpc.Config.default_pool_name/0`. Use
+  `PubsubGrpc.execute/2` and `PubsubGrpc.pool_status/1`.
+- `invalidate/1` in `PubsubGrpc.Auth` is hidden from the docs (internal).
+- The gcloud CLI's raw output is no longer logged, not even at debug level.
+
+### Documentation
+- **Auth docs rewritten**: production auth is Goth (`config :pubsub_grpc, :goth,
+  MyApp.Goth`); GCE/GKE metadata and service-account keys go through Goth's `:metadata` /
+  `:service_account` sources. The gcloud CLI is for development (it forks a process per
+  refresh). The non-working `config :goth, json:` example is removed.
+- `:timeout` bounds the RPC deadline only: when the connection process is unresponsive,
+  a call can block up to ~5 s more (grpc gun adapter's `GenServer.call` timeout) before
+  returning `{:error, %PubsubGrpc.Error{code: :unavailable}}`.
+- `pull/4` long polling (an empty pull can block until its deadline), pool sizing, the
+  supervision restart policy, and a README "Security Advisories" section with the
+  `ignore_advisories` snippet and the recommended lock floors.
+- The telemetry auth `:source` value `:custom` is documented as internal (it only appears
+  with the `:token_fetcher` test seam).
+
 ## [0.7.0] - 2026-10-31
 
 ### Breaking Changes
@@ -79,7 +187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Goth or gcloud CLI). An invalid value fails startup with an `ArgumentError`; one set
   at runtime after startup falls back to the default.
 - `PubsubGrpc.Auth.request_opts/1` builds request options for a given channel (the token
-  only over TLS), and `PubsubGrpc.Auth.invalidate/1` drops a token from the cache only if
+  only over TLS), and `invalidate/1` in `PubsubGrpc.Auth` drops a token from the cache only if
   it is still the cached one.
 
 ### Changed

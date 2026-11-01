@@ -13,11 +13,16 @@ defmodule Mix.Tasks.Emulator.Start do
   The container is named 'pubsub-emulator' for easy management.
   """
 
+  # Keep in sync with docker-compose.yml (the Dependabot-tracked source of truth).
+  @image "google/cloud-sdk:489.0.0-emulators@sha256:6e0520e94bf93e4f4d53ffd8f52b664bd614b73e2f2e8467f54f6c9a9f4d0763"
+
   def run(_args) do
     Mix.Shell.IO.info("Starting Google Cloud Pub/Sub emulator...")
 
     # Check if emulator is already running
-    case System.cmd("docker", ["ps", "-q", "-f", "name=pubsub-emulator"], stderr_to_stdout: true) do
+    case System.cmd("docker", ["ps", "-q", "-f", "name=^pubsub-emulator$"],
+           stderr_to_stdout: true
+         ) do
       {output, 0} ->
         if String.trim(output) != "" do
           Mix.Shell.IO.info("Emulator is already running")
@@ -40,7 +45,7 @@ defmodule Mix.Tasks.Emulator.Start do
       "pubsub-emulator",
       "-p",
       "127.0.0.1:8085:8085",
-      "google/cloud-sdk:489.0.0-emulators",
+      @image,
       "/bin/bash",
       "-c",
       "gcloud beta emulators pubsub start --project=test-project-id --host-port='0.0.0.0:8085'"
@@ -53,7 +58,7 @@ defmodule Mix.Tasks.Emulator.Start do
         Mix.Shell.IO.info("Use 'mix emulator.stop' to stop the emulator")
 
       {error, _} ->
-        Mix.Shell.IO.error("Failed to start emulator: #{error}")
+        Mix.raise("Failed to start emulator: #{error}")
     end
   end
 end
