@@ -44,10 +44,10 @@ defmodule PubsubGrpc.Client do
   end
 
   # The exit reason of a GenServer.call embeds the call message: for grpc's gun
-  # ConnectionProcess that is the request headers (bearer token) and body. Only
-  # exits of calls to that process become `:unavailable` (keeping an atom tag);
-  # any other exit, e.g. from a GenServer an `execute/2` callback calls, is
-  # re-raised unchanged.
+  # ConnectionProcess that is the request headers (bearer token) and body (grpc 1.0.x;
+  # grpc >= 1.1 redacts them before the exit leaves grpc). Only exits of calls to that
+  # process become `:unavailable` (keeping an atom tag); any other exit, e.g. from a
+  # GenServer an `execute/2` callback calls, is re-raised unchanged.
   defp run(operation_fn, channel) do
     operation_fn.(channel)
   catch
@@ -60,13 +60,23 @@ defmodule PubsubGrpc.Client do
   end
 
   # The messages `GRPC.Client.Adapters.Gun.ConnectionProcess` is called with
-  # (`request/4`, `open_stream/3`, `send_data/4`, `cancel/2`).
+  # (`request/4`, `open_stream/3`, `send_data/4`, `cancel/2`). grpc 1.0.x sends headers
+  # and body as-is; grpc >= 1.1 appends a deadline to `request` and `open_stream`, and
+  # `GRPC.Client.Adapter.call/3` replaces headers and body with `:redacted` in the exit.
   defp connection_process_call?({:request, path, headers, _body})
        when is_binary(path) and is_list(headers),
        do: true
 
+  defp connection_process_call?({:request, path, headers, _body, _deadline})
+       when is_binary(path) and (is_list(headers) or headers == :redacted),
+       do: true
+
   defp connection_process_call?({:open_stream, path, headers})
        when is_binary(path) and is_list(headers),
+       do: true
+
+  defp connection_process_call?({:open_stream, path, headers, _deadline})
+       when is_binary(path) and (is_list(headers) or headers == :redacted),
        do: true
 
   defp connection_process_call?({:send_data, _stream_ref, fin, _data}) when fin in [:fin, :nofin],

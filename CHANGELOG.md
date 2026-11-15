@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-11-15
+
+### Security
+- **Locked dependencies updated to versions without known advisories**: cowlib
+  2.21.0 → 2.22.0 (EEF-CVE-2026-113431, HIGH; CVE-2026-43966, MEDIUM), grpc_core
+  1.0.5 → 1.1.0 (EEF-CVE-2026-121808, HIGH), with grpc 1.0.5 → 1.1.0 and gun 2.4.1 → 2.7.0,
+  which grpc 1.1 requires. `grpc_connection_pool` still accepts the affected versions, so
+  consumers must update them in their own lock (see README "Security Advisories").
+- The `CVE-2026-43966` entry in `hex: [ignore_advisories: ...]` and the CI step that failed
+  once cowlib > 2.21.0 was released are removed; `mix hex.audit` is clean without them.
+
+### Fixed
+- **Connection-process exits under grpc ≥ 1.1 return `:unavailable` again.** grpc 1.1
+  appends a deadline to the gun connection process's `request` and `open_stream` call
+  messages and redacts their headers and body itself, so these exits no longer matched and
+  escaped `PubsubGrpc.execute/2` and every operation as exits. Both the grpc 1.0.x and 1.1
+  message shapes are now recognized. With grpc ≥ 1.1 the `reason` in grpc's
+  `[:grpc, :client, :rpc, :exception]` telemetry event is redacted too; its `stream`
+  metadata can still carry request metadata, so still do not log that event's metadata
+  verbatim.
+
 ## [0.8.0] - 2026-11-01
 
 ### Security

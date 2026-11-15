@@ -99,7 +99,9 @@ defmodule PubsubGrpc.ConnectionExitTest do
                    results
         end)
 
-      assert log =~ "Bearer [REDACTED]"
+      # grpc logs the exit: with raw headers rewritten by LogRedactor (grpc 1.0.x) or
+      # already `:redacted` by grpc itself (>= 1.1). Either way no token survives.
+      assert log =~ "GenServer.call"
       refute log =~ "ya29.X"
       refute log =~ "ya29.REGRESSION"
     end
@@ -113,10 +115,17 @@ defmodule PubsubGrpc.ConnectionExitTest do
     test "exits of calls to grpc's gun connection process, tagged by reason" do
       headers = [{"authorization", "Bearer ya29.SECRET"}]
 
+      # grpc 1.0.x messages carry headers and body; grpc >= 1.1 appends a deadline and
+      # redacts them before the exit leaves grpc.
       for {reason, message, tag} <- [
             {:timeout, {:request, "/google.pubsub.v1.Publisher/Publish", headers, "body"},
              :timeout},
             {:noproc, {:open_stream, "/google.pubsub.v1.Subscriber/StreamingPull", headers},
+             :noproc},
+            {:timeout,
+             {:request, "/google.pubsub.v1.Publisher/Publish", :redacted, :redacted, -1},
+             :timeout},
+            {:noproc, {:open_stream, "/google.pubsub.v1.Subscriber/StreamingPull", :redacted, -1},
              :noproc},
             {{:shutdown, :closed}, {:send_data, make_ref(), :fin, "data"}, :shutdown},
             {{:EXIT, :weird}, {:cancel, make_ref()}, :unknown}
