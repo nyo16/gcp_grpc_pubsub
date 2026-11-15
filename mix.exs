@@ -1,7 +1,7 @@
 defmodule PubsubGrpc.MixProject do
   use Mix.Project
 
-  @version "0.8.0"
+  @version "0.8.1"
   @source_url "https://github.com/nyo16/gcp_grpc_pubsub"
 
   def project do
@@ -17,15 +17,6 @@ defmodule PubsubGrpc.MixProject do
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
         plt_add_apps: [:mix, :ex_unit]
-      ],
-
-      # Accepted advisory, see CHANGELOG.md "Known advisories": CVE-2026-43966 (aka
-      # EEF-CVE-2026-43966 for cowlib, GHSA-w4f7-4cxr-rv3c for gun; Hex matches aliases).
-      # cowlib/gun are pulled in by grpc's gun adapter and the vulnerable code paths are not
-      # reachable from this library. Review this list on every dependency bump (stale entries
-      # only warn); CI's audit job fails once cowlib > 2.21.0 is released.
-      hex: [
-        ignore_advisories: ["CVE-2026-43966"]
       ],
 
       # Docs

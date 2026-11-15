@@ -198,17 +198,6 @@ jobs:
       - name: Check retired packages & security advisories
         run: mix hex.audit
 
-      # mix.exs ignores CVE-2026-43966 (cowlib 2.21.0 / gun). A newer cowlib release may fix it:
-      # fail so the ignore list gets reviewed.
-      - name: Review ignored advisories when cowlib > 2.21.0 is released
-        run: |
-          # Capture first: mix crashes with EPIPE if the reader closes the pipe early.
-          COWLIB_INFO=$(mix hex.info cowlib)
-          COWLIB_LATEST=$(printf '%s\n' "$COWLIB_INFO" | awk '/^Recent releases:/{f=1;next} f&&/^[[:space:]]+[0-9]/{print $1;next} f{f=0}' | sort -V | tail -n1)
-          echo "cowlib latest: $COWLIB_LATEST"
-          [ -n "$COWLIB_LATEST" ] || { echo "::error::Could not parse cowlib releases from mix hex.info"; exit 1; }
-          printf '%s\n' "$COWLIB_LATEST" 2.21.0 | sort -V -C || { echo "::error::cowlib $COWLIB_LATEST > 2.21.0 is out: review hex ignore_advisories in mix.exs"; exit 1; }
-
   test:
     name: Tests (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
@@ -289,8 +278,10 @@ jobs:
     needs: [compile, format, credo, dialyzer, audit, test]
     # Tag pushes only: never from schedule or workflow_dispatch (even when dispatched on a tag).
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    # Required reviewers and the HEX_API_KEY secret are configured on this environment
-    # in the GitHub repository settings.
+    # HEX_API_KEY must live in the `hex` environment, not in repository secrets, so only
+    # this job can read it. The environment admits `v*` tags only, requires a reviewer and
+    # has no admin bypass, so nothing reaches Hex without an approval (Actions -> the run ->
+    # Review deployments). Settings -> Environments -> hex; mirrors llama_cpp_ex.
     environment: hex
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

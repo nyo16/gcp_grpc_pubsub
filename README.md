@@ -18,7 +18,7 @@ High-performance Google Cloud Pub/Sub client using gRPC with connection pooling.
 ```elixir
 def deps do
   [
-    {:pubsub_grpc, "~> 0.7.0"}
+    {:pubsub_grpc, "~> 0.8.1"}
   ]
 end
 ```
@@ -361,29 +361,25 @@ That forks a process per refresh and is meant for development only.
 
 ## Security Advisories
 
-`mix hex.audit` in a project depending on `pubsub_grpc` reports CVE-2026-43966 for
-**cowlib** (EEF-CVE-2026-43966) and **gun** (GHSA-w4f7-4cxr-rv3c). Both come in through
-grpc's gun adapter, and neither is reachable from this library:
+As of this writing, `mix hex.audit` reports no advisories when `pubsub_grpc` is used with
+cowlib ≥ 2.22.0, grpc and grpc_core ≥ 1.1.0, and gun ≥ 2.7.0. Older locks are affected by:
 
-- cowlib: the vulnerable encoder `cow_http_struct_hd:escape_string/2` is not called on the
-  gRPC client path. No fixed cowlib release exists yet.
-- gun: the advisory's "patched" version (2.16.0) is a cowboy version, so scanners flag
-  every gun release. grpc pins `gun ~> 2.4.0`.
+- **cowlib < 2.22.0**: EEF-CVE-2026-113431 (HIGH, HTTP/2 HPACK memory exhaustion),
+  CVE-2026-43966 (MEDIUM; scanners also report it for gun as GHSA-w4f7-4cxr-rv3c).
+- **grpc_core < 1.1.0**: EEF-CVE-2026-121808 (HIGH, memory exhaustion in the Erlpack codec).
 
-This library ignores the advisory in its own `mix.exs`; to do the same in yours:
+`grpc_connection_pool` still accepts the affected versions, so updating `pubsub_grpc` alone
+does not move them. Update them in your lock (grpc 1.1 requires grpc_core 1.1 and
+gun 2.7, so they move together):
 
-```elixir
-def project do
-  [
-    # ...
-    hex: [ignore_advisories: ["CVE-2026-43966"]]
-  ]
-end
+```bash
+mix deps.update cowlib grpc grpc_core gun
 ```
 
-Review the list on every dependency bump. Since 0.8.0 (via `grpc_connection_pool`
-0.5.5), updating `pubsub_grpc` enforces the fixed cowlib (≥ 2.21.0) and protobuf
-(≥ 0.17.1). If you use Goth, also make sure your lock has jose ≥ 1.11.13:
+If you previously added `hex: [ignore_advisories: ["CVE-2026-43966"]]` to your `mix.exs`,
+remove it after updating. Since 0.8.0 (via `grpc_connection_pool` 0.5.5), updating
+`pubsub_grpc` enforces protobuf ≥ 0.17.1. If you use Goth, also make sure your lock has
+jose ≥ 1.11.13:
 
 ```bash
 mix deps.update pubsub_grpc jose
