@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-11-23
+
+### Changed
+- **`grpc_connection_pool` requirement raised to `~> 0.5.8`** (locked 0.5.5 → 0.5.8). 0.5.6–0.5.8
+  only refresh that library's own lock (grpc/grpc_core 1.1.0, gun 2.7.0, cowlib 2.22.0,
+  nimble_options 1.2.0); its `lib/` and published requirements are unchanged from 0.5.5.
+- Locked dependencies updated: `telemetry` 1.4.2 → 1.4.3, `nimble_options` 1.1.1 → 1.2.0,
+  `nimble_pool` 1.1.0 → 1.2.0 and `finch` 0.24.0 → 0.25.0 (via the optional `goth`; finch
+  0.25 requires nimble_pool 1.2), plus dev tooling `dialyxir` 1.4.9 and `ex_doc` 0.40.5.
+  A published library does not ship its `mix.lock`; bump these in your own lock if wanted.
+- Still blocked upstream: gun 2.8.0 (grpc 1.1 pins `~> 2.7.0`) and googleapis 0.2.0
+  (grpc_core pins `~> 0.1.0`).
+
 ## [0.8.1] - 2026-11-15
 
 ### Security
